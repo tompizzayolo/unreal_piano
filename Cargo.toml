@@ -1,0 +1,30 @@
+[package]
+name = "unreal_piano"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nice-plug = { version = "0.3.0", features = [
+    "assert_process_allocs",
+] }
+nice-plug-iced = "0.3.0"
+atomic_float = "1.1"
+rand = "0.10.2"
+# Enable a small amount of optimization in the dev profile.
+[profile.dev]
+opt-level = 1
+
+# Enable more optimization in the release profile at the cost of compile time.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+# (optional) helps reduce binary size
+strip = "symbols"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
