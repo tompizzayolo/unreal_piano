@@ -1,11 +1,26 @@
 # Unreal Piano
-WIP Physical Modeling based piano synthesiser
+
+**WIP physical-modeling-based piano synthesizer**
+Currently it is a total crap
 
 ## Vision
-Push beyond synthesizing the sound of a piano and go crazy with sound design
+
+Push beyond simply synthesizing the sound of a piano and go nuts with sound design and textures 
 
 ## Credits
-Haifan Xie - the creator of a research paper that this plugin is trying to replicate https://arxiv.org/html/2409.03481v3#S1
+
+The physical modeling approach is based on research by **Haifan Xie**:
+
+* [Physical modeling research paper](https://arxiv.org/html/2409.03481v3#S1)
+
+This project aims to replicate and build upon the techniques presented in the paper.
 
 ## Building
+
+Requires [cargo-nice-plug](https://github.com/robbert-vdh/nih-plug).
+
+```bash
 cargo nice-plug bundle unreal_piano --release
+```
+
+> **Status:** Work in progress. Expect things to break.
