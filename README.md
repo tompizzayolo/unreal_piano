@@ -5,7 +5,7 @@ Currently it is a total crap
 
 ## Vision
 
-Push beyond simply synthesizing the sound of a piano and go nuts with sound design and textures 
+Making a great sounding piano is a number 1 priority with this synth, but since this is not a real piano anyway, why not say screw it and push beyond simply synthesizing the sound of a piano, go nuts with sound design and textures, something that is impossible with a real piano
 
 ## Credits
 
