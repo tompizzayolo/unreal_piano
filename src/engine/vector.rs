@@ -1,14 +1,9 @@
-//! Tiny 3-vector type plus the frame rotations used by the hammer model.
-
 use std::ops::{Add, Mul, Neg, Sub};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Vector3 {
-    /// Longitudinal direction of the string (paper's x / u).
     pub x: f64,
-    /// Horizontal direction of the string (paper's y / v).
     pub y: f64,
-    /// Vertical direction of the string (paper's z / w).
     pub z: f64,
 }
 

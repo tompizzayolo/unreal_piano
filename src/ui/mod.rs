@@ -1,6 +1,6 @@
-//! Iced editor: preset buttons, a horizontal row of parameter sections
-//! (Output / Voicing / Tuning / Design), a peak meter and the voice count.
+use crate::UnrealPianoParams;
 use crate::presets::{AdjustableParameter, PRESETS};
+
 use nice_plug::{editor::dpi::LogicalSize, prelude::*};
 use nice_plug_iced::{
     IcedNiceContext, PersistentState,
@@ -9,20 +9,17 @@ use nice_plug_iced::{
         widget::{Column, ProgressBar, Row, button, column, pick_list, row, slider, text},
     },
 };
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-
-use crate::UnrealPianoParams;
 
 pub const MIN_WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(920.0, 520.0);
 pub const INITIAL_WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(980.0, 660.0);
 pub const RESIZE_HINT: ResizeHint = ResizeHint::resizable().with_min_logical_size(MIN_WINDOW_SIZE);
 pub const INITIAL_SCALE_FACTOR: f32 = 1.0;
 
-/// Fixed width of each parameter section.
 const SECTION_WIDTH: f32 = 200.0;
 
-/// State shared between the editor and the audio thread.
 pub struct EditorSharedState {
     pub params: Arc<UnrealPianoParams>,
     pub peak_meter: Arc<AtomicF32>,
@@ -43,19 +40,37 @@ pub enum Message {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ScaleOption(f32);
+
+impl std::fmt::Display for ScaleOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}%", (self.0 * 100.0).round())
+    }
+}
+
+const SCALE_OPTIONS: [ScaleOption; 6] = [
+    ScaleOption(0.75),
+    ScaleOption(1.0),
+    ScaleOption(1.25),
+    ScaleOption(1.5),
+    ScaleOption(1.75),
+    ScaleOption(2.0),
+];
+
 pub struct PianoGui {
     persistent_state: PersistentState<EditorSharedState>,
     ctx: IcedNiceContext,
     peak_meter_db: f32,
 }
 
-/// A labeled slider bound to one parameter.
 fn parameter_control(
-    label: &str,
+    label: &'static str,
     param: &FloatParam,
     which: AdjustableParameter,
 ) -> Column<'static, Message> {
     let readout = param.normalized_value_to_string(param.modulated_normalized_value(), true);
+
     column![
         text(format!("{}: {}", label, readout)),
         slider(
@@ -117,6 +132,7 @@ impl PianoGui {
                 normalized_value,
             } => {
                 let param = which.param(params);
+
                 setter.begin_set_parameter(param);
                 setter.set_parameter_normalized(param, normalized_value);
                 setter.end_set_parameter(param);
@@ -125,6 +141,7 @@ impl PianoGui {
                 if let Some(preset) = PRESETS.get(preset_index) {
                     for assignment in preset.values.iter() {
                         let param = assignment.parameter.param(params);
+
                         setter.begin_set_parameter(param);
                         setter.set_parameter_normalized(
                             param,
@@ -140,26 +157,18 @@ impl PianoGui {
     pub fn view(&self) -> Column<'_, Message> {
         let params = &self.persistent_state.params;
 
-        let scale_options = [
-            ScaleOption(0.75),
-            ScaleOption(1.0),
-            ScaleOption(1.25),
-            ScaleOption(1.5),
-            ScaleOption(1.75),
-            ScaleOption(2.0),
-        ];
-
-        let mut preset_buttons: Vec<Element<'_, Message>> = Vec::new();
-        for (preset_index, preset) in PRESETS.iter().enumerate() {
-            preset_buttons.push(
+        let preset_buttons: Vec<Element<'_, Message>> = PRESETS
+            .iter()
+            .enumerate()
+            .map(|(preset_index, preset)| {
                 button(preset.name)
                     .on_press(Message::PresetApplied { preset_index })
-                    .into(),
-            );
-        }
+                    .into()
+            })
+            .collect();
+
         let preset_row = Row::with_children(preset_buttons).spacing(8.0);
 
-        // The four parameter sections, side by side.
         let output_section = column![
             text("Output").size(16),
             parameter_control("Gain", &params.output_gain, AdjustableParameter::OutputGain),
@@ -297,7 +306,7 @@ impl PianoGui {
             row![
                 text("scale"),
                 pick_list(
-                    scale_options,
+                    SCALE_OPTIONS,
                     Some(ScaleOption(self.ctx.user_scale_factor())),
                     |option| Message::SetScaleFactor(option.0)
                 )
@@ -308,14 +317,5 @@ impl PianoGui {
         .padding(20)
         .spacing(16.0)
         .align_x(Center)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct ScaleOption(f32);
-
-impl std::fmt::Display for ScaleOption {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}%", (self.0 * 100.0).round())
     }
 }

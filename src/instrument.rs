@@ -1,8 +1,3 @@
-//! The shared body of the instrument: soundboard, air, room, the per-note
-//! design table and the master step loop (paper §3, §5, §6.2, §6.3, §7.3).
-//! Every voice drives, and listens to, this one shared resonator — as in a
-//! real piano there is one board and one room.
-
 use crate::engine::air::{AirRoom, AirRoomDesign};
 use crate::engine::hammer::{FeltProperties, HammerGeometry};
 use crate::engine::soundboard::{Soundboard, SoundboardDesign};
@@ -11,59 +6,36 @@ use crate::engine::vector::Vector3;
 use crate::voice::{SUB_STEPS_DURING_STRIKE, SynthVoice};
 use std::f64::consts::PI;
 
-/// Fixed internal simulation rate [Hz].
 pub const SIMULATION_RATE_HZ: f64 = 48_000.0;
-/// Internal step size [s].
 pub const SIMULATION_STEP_SIZE: f64 = 1.0 / SIMULATION_RATE_HZ;
-/// Coupling sweeps per (sub-)step (paper §7.2).
 pub const COUPLING_SWEEPS: usize = 1;
-/// Room/soundboard ring-out after the last voice ends [s].
+
 const RINGOUT_SECONDS: f64 = 0.75;
 
+#[inline]
 fn linear_interpolation(low: f64, high: f64, fraction: f64) -> f64 {
     low + (high - low) * fraction
 }
 
-// ---------------------------------------------------------------------------
-// Voicing controls.
-// ---------------------------------------------------------------------------
-
-/// Strike-time voicing controls (read once per note-on).
 #[derive(Clone, Copy)]
 pub struct StrikeVoicingControls {
-    /// Global hammer hardness offset, -1..+1.
     pub hammer_hardness: f64,
-    /// Felt hardness at piano dynamics, 0..2 (1 = neutral).
     pub hammer_hardness_piano: f64,
-    /// Felt hardness at mezzo dynamics, 0..2 (1 = neutral).
     pub hammer_hardness_mezzo: f64,
-    /// Felt hardness at forte dynamics, 0..2 (1 = neutral).
     pub hammer_hardness_forte: f64,
-    /// Hammer mechanical noise level, 0.1..3.
     pub hammer_noise: f64,
-    /// Hammer tone tilt, -1 (dark)..+1 (bright).
     pub hammer_tone: f64,
-    /// Soft pedal (una corda) amount, 0..1.
     pub soft_pedal: f64,
-    /// Unison detune width, 0..20 (10 = the validated default sound).
     pub unison_width: f64,
-    /// String length redesign factor in metres, 0.8..10 (1 m = x1).
     pub string_length_scale: f64,
-    /// Strike position along the speaking length, 1/64..1/2.
     pub strike_point_ratio: f64,
 }
 
-/// Live voicing controls (act while notes ring; updated once per block).
 #[derive(Clone, Copy)]
 pub struct LiveVoicingControls {
-    /// Sympathetic resonance: how strongly strings listen to the bridge,
-    /// 0..5 (1 = the physical value).
     pub sympathetic_resonance: f64,
-    /// Duplex-scale resonator output level, 0..20.
     pub duplex_scale: f64,
-    /// Blooming energy, 0..2 (0 = off).
     pub blooming_energy: f64,
-    /// Blooming inertia (swell time constant), 0.1..3 s.
     pub blooming_inertia: f64,
 }
 
@@ -78,24 +50,14 @@ impl Default for LiveVoicingControls {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Per-note design (all 88 keys).
-// ---------------------------------------------------------------------------
-
-/// Voicing values baked into a note at strike time.
 #[derive(Clone, Copy)]
 pub struct VoicingBaked {
-    /// Per-string share of the hammer force (soft pedal / una corda).
     pub hammer_force_scales: [f64; 3],
-    /// Lateral contact-point shift from the soft pedal [m].
     pub lateral_misalignment_shift: f64,
-    /// Peak hammer-noise force [N].
     pub hammer_noise_amplitude: f64,
-    /// Hammer-noise low-pass cutoff [Hz] (encodes the tone control).
     pub hammer_noise_cutoff_hz: f64,
 }
 
-/// Everything needed to build the voice of one MIDI note.
 #[derive(Clone, Copy)]
 pub struct NoteDesign {
     pub string: PianoStringDesign,
@@ -103,13 +65,10 @@ pub struct NoteDesign {
     pub number_of_unison_strings: usize,
     pub unison_relative_detunes: [f64; 3],
     pub unison_lateral_offsets: [f64; 3],
-    /// The note's fundamental frequency [Hz] (exact by construction).
     pub fundamental_frequency: f64,
     pub voicing: VoicingBaked,
 }
 
-/// Piecewise hardness across the dynamic range: piano -> mezzo -> forte over
-/// `velocity_blend` (0..1).
 fn velocity_hardness_curve(
     velocity_blend: f64,
     hardness_piano: f64,
@@ -123,31 +82,26 @@ fn velocity_hardness_curve(
     }
 }
 
-/// Per-note physical scaling, anchored to the validated C4 preset, with the
-/// voicing/design controls applied.  Pitch is exact by construction: the
-/// effective density absorbs the winding mass of the bass strings, and the
-/// length redesign keeps tuning by scaling tension with the square of the
-/// length (same wire, so inharmonicity drops with the fourth power).
 pub fn note_design(
     midi_note: u8,
     controls: &StrikeVoicingControls,
     velocity_blend: f64,
 ) -> NoteDesign {
     let note = midi_note.clamp(21, 108) as usize;
-    let note_fraction = (note - 21) as f64 / 87.0; // 0 in the bass, 1 in the treble
-    let fundamental_frequency = 440.0 * 2.0_f64.powf((note as f64 - 69.0) / 12.0);
+    let note_fraction = (note - 21) as f64 / 87.0;
+    let fundamental_frequency = 440.0 * ((note as f64 - 69.0) / 12.0).exp2();
 
-    // ---- Design: string length & strike point ---------------------------
     let length_scale = controls.string_length_scale.clamp(0.8, 10.0);
+
     let base_speaking_length = if note >= 60 {
         0.62 * (0.052_f64 / 0.62).powf((note - 60) as f64 / 48.0)
     } else {
         (0.62 * (261.6256 / fundamental_frequency).powf(0.90)).min(1.42)
     };
+
     let speaking_length = base_speaking_length * length_scale;
     let strike_ratio = controls.strike_point_ratio.clamp(1.0 / 64.0, 0.5);
 
-    // Core radius [m], piecewise linear across the compass.
     let core_radius = if note <= 45 {
         linear_interpolation(0.95e-3, 0.72e-3, (note - 21) as f64 / 24.0)
     } else if note <= 60 {
@@ -156,11 +110,10 @@ pub fn note_design(
         linear_interpolation(0.475e-3, 0.33e-3, (note - 60) as f64 / 48.0)
     };
 
-    // Roughly iso-tension; the length redesign rescales tension by s² so the
-    // pitch is preserved for the same wire (mu is unchanged by the scaling).
     let tension = linear_interpolation(750.0, 550.0, note_fraction) * length_scale * length_scale;
 
     let linear_mass_density = tension / (2.0 * speaking_length * fundamental_frequency).powi(2);
+
     let effective_density = (linear_mass_density / (PI * core_radius * core_radius)).max(7850.0);
 
     let highest_modeled_frequency = (24.0 * fundamental_frequency)
@@ -190,21 +143,25 @@ pub fn note_design(
         },
     };
 
-    // ---- Voicing: hammer felt --------------------------------------------
     let velocity_hardness = velocity_hardness_curve(
         velocity_blend,
         controls.hammer_hardness_piano,
         controls.hammer_hardness_mezzo,
         controls.hammer_hardness_forte,
     );
+
     let effective_hardness = (controls.hammer_hardness + velocity_hardness - 1.0).clamp(-3.0, 3.0);
+
     let stiffness_multiplier = 2.0_f64.powf(effective_hardness * 1.5);
+
     let base_felt_stiffness =
         linear_interpolation(9.0e10, 4.5e11, note_fraction) * stiffness_multiplier;
+
     let felt_exponent = (linear_interpolation(2.7, 3.4, note_fraction)
         + effective_hardness * 0.15
         + controls.hammer_tone * 0.25)
         .clamp(1.8, 4.2);
+
     let felt_relaxation_time = (linear_interpolation(3.2e-4, 1.2e-4, note_fraction)
         * 2.0_f64.powf(-effective_hardness * 0.5))
     .max(3.0e-5);
@@ -219,12 +176,13 @@ pub fn note_design(
         relaxation_time: [felt_relaxation_time; 3],
     };
 
-    // ---- Voicing: soft pedal & hammer noise ------------------------------
     let soft_pedal = controls.soft_pedal.clamp(0.0, 1.0);
     let hammer_force_scales = [1.0 - soft_pedal, 1.0, 1.0];
     let lateral_misalignment_shift = soft_pedal * 1.5e-3;
+
     let hammer_noise_amplitude =
         controls.hammer_noise.clamp(0.0, 3.0) * (0.5 + 2.5 * velocity_blend.clamp(0.0, 1.0));
+
     let hammer_noise_cutoff_hz =
         800.0 * 25.0_f64.powf((controls.hammer_tone.clamp(-1.0, 1.0) + 1.0) * 0.5);
 
@@ -232,11 +190,11 @@ pub fn note_design(
     let unison_relative_detunes = [-1.2, 0.4, 1.0].map(|detune| detune * unison_width * 1.0e-4);
 
     let number_of_unison_strings = if note < 33 {
-        1 // wound monochord
+        1
     } else if note < 45 {
-        2 // wound bichord
+        2
     } else {
-        3 // plain trichord
+        3
     };
 
     NoteDesign {
@@ -255,8 +213,6 @@ pub fn note_design(
     }
 }
 
-/// Hammer geometry shared by all notes (one hammer rail; only the felt law
-/// varies per note).
 pub fn shared_hammer_geometry() -> HammerGeometry {
     HammerGeometry {
         horizontal_arm_length: 0.135,
@@ -269,10 +225,6 @@ pub fn shared_hammer_geometry() -> HammerGeometry {
         pivot_damping: 2.0e-4,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Direct + early-reflection field.
-// ---------------------------------------------------------------------------
 
 struct SoundPath {
     delay_seconds: f64,
@@ -293,15 +245,21 @@ impl DirectAndEarlyField {
         wall_reflection_factor: f64,
     ) -> Self {
         let distance_between = |from: Vector3, to: Vector3| -> f64 {
-            ((from.x - to.x).powi(2) + (from.y - to.y).powi(2) + (from.z - to.z).powi(2)).sqrt()
+            let dx = from.x - to.x;
+            let dy = from.y - to.y;
+            let dz = from.z - to.z;
+            (dx * dx + dy * dy + dz * dz).sqrt()
         };
+
         let mut sound_paths = Vec::with_capacity(7);
 
         let direct_distance = distance_between(soundboard_position, listener_position);
+
         sound_paths.push(SoundPath {
             delay_seconds: direct_distance / speed_of_sound,
             gain: air_density / (4.0 * PI * direct_distance),
         });
+
         for axis in 0..3 {
             for wall_side in 0..2 {
                 let mirrored_source = if wall_side == 0 {
@@ -312,13 +270,16 @@ impl DirectAndEarlyField {
                         2.0 * room_dimensions.component(axis) - soundboard_position.component(axis),
                     )
                 };
+
                 let image_distance = distance_between(mirrored_source, listener_position);
+
                 sound_paths.push(SoundPath {
                     delay_seconds: image_distance / speed_of_sound,
                     gain: wall_reflection_factor * air_density / (4.0 * PI * image_distance),
                 });
             }
         }
+
         DirectAndEarlyField { sound_paths }
     }
 
@@ -329,10 +290,6 @@ impl DirectAndEarlyField {
             .sum()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Ring buffer of the board's volume acceleration.
-// ---------------------------------------------------------------------------
 
 struct SampleHistory {
     samples: Vec<f64>,
@@ -367,29 +324,29 @@ impl SampleHistory {
         if age_seconds < 0.0 || self.total_samples_pushed == 0 {
             return 0.0;
         }
+
         let fractional_position = age_seconds * self.sample_rate;
         let whole_steps_back = fractional_position.floor() as usize;
         let fraction = fractional_position - whole_steps_back as f64;
+
         let capacity = self.samples.len();
         let available_history = self.total_samples_pushed.min(capacity);
+
         if whole_steps_back + 1 >= available_history {
             return 0.0;
         }
+
         let newest_index = (self.write_index + capacity - 1) % capacity;
         let index_newer = (newest_index + capacity - whole_steps_back) % capacity;
         let index_older = (newest_index + capacity - whole_steps_back - 1) % capacity;
+
         self.samples[index_newer] * (1.0 - fraction) + self.samples[index_older] * fraction
     }
 }
 
-// ---------------------------------------------------------------------------
-// The instrument.
-// ---------------------------------------------------------------------------
-
 pub struct Instrument {
     pub soundboard: Soundboard,
     pub air: AirRoom,
-    /// Voicing controls that act while notes ring (set per audio block).
     pub live_voicing: LiveVoicingControls,
     volume_acceleration_history: SampleHistory,
     direct_and_early_field: DirectAndEarlyField,
@@ -411,6 +368,7 @@ impl Instrument {
             highest_mode_frequency: 4000.0,
             random_seed,
         });
+
         let air = AirRoom::new(&AirRoomDesign {
             room_dimensions,
             speed_of_sound,
@@ -419,6 +377,7 @@ impl Instrument {
             soundboard_position: soundboard_center_position,
             listener_position,
         });
+
         let history_capacity = (12.0 / speed_of_sound * SIMULATION_RATE_HZ).ceil() as usize + 8;
 
         Instrument {
@@ -439,50 +398,51 @@ impl Instrument {
         }
     }
 
-    /// Advance the whole instrument by one engine step.  Returns the
-    /// listener pressure at the end of the step.  When no voice is active
-    /// and the room has finished ringing out this is a cheap no-op that
-    /// returns silence.
     pub fn step(&mut self, voices: &mut [Option<SynthVoice>]) -> f64 {
         let any_voice_active = voices.iter().any(|voice| voice.is_some());
+
         if !any_voice_active && self.ringout_steps_remaining == 0 {
             self.volume_acceleration_history.push(0.0);
             self.simulated_time += SIMULATION_STEP_SIZE;
             return 0.0;
         }
+
         self.ringout_steps_remaining = if any_voice_active {
             (RINGOUT_SECONDS * SIMULATION_RATE_HZ) as u64
         } else {
             self.ringout_steps_remaining.saturating_sub(1)
         };
 
-        // Direct-field history on the engine-rate grid.
         let current_volume_acceleration = self.soundboard.volume_acceleration();
         self.volume_acceleration_history
             .push(current_volume_acceleration);
 
-        // Strike-phase sub-stepping is global: all voices and the shared
-        // resonators advance on the same clock.
-        let bridge_state_for_phase_check = self.soundboard.bridge_state();
-        let strike_phase_is_active = voices.iter().flatten().any(|voice| {
-            voice
-                .engine
-                .is_in_strike_phase(bridge_state_for_phase_check.displacement)
-        });
+        let strike_phase_is_active = if any_voice_active {
+            let bridge_state_for_phase_check = self.soundboard.bridge_state();
+
+            voices.iter().flatten().any(|voice| {
+                voice
+                    .engine
+                    .is_in_strike_phase(bridge_state_for_phase_check.displacement)
+            })
+        } else {
+            false
+        };
+
         let sub_step_count = if strike_phase_is_active {
             SUB_STEPS_DURING_STRIKE
         } else {
             1
         };
-        let sub_step_size = SIMULATION_STEP_SIZE / sub_step_count as f64;
 
-        // The damper and the slow voicing modulations advance once per
-        // engine step.
+        let sub_step_size = SIMULATION_STEP_SIZE / sub_step_count as f64;
         let live_voicing = self.live_voicing;
+
         for voice in voices.iter_mut().flatten() {
             if voice.releasing {
                 voice.engine.apply_damper_step();
             }
+
             voice.engine.update_slow_modulations(
                 SIMULATION_STEP_SIZE,
                 live_voicing.blooming_energy,
@@ -495,18 +455,22 @@ impl Instrument {
         for _ in 0..sub_step_count {
             let shared_bridge_state = self.soundboard.bridge_state();
             let mut total_bridge_force = Vector3::ZERO;
+
             for voice in voices.iter_mut().flatten() {
                 total_bridge_force = total_bridge_force
                     + voice
                         .engine
                         .advance(sub_step_size, &shared_bridge_state, COUPLING_SWEEPS);
             }
+
             let air_pressure_at_soundboard = self.air.pressure_at_soundboard();
+
             self.soundboard.apply_forces_and_advance(
                 total_bridge_force,
                 air_pressure_at_soundboard,
                 sub_step_size,
             );
+
             let soundboard_volume_velocity = self.soundboard.volume_velocity();
             self.air.advance(soundboard_volume_velocity, sub_step_size);
         }
@@ -515,7 +479,6 @@ impl Instrument {
         self.listener_pressure()
     }
 
-    /// Zero all shared state (called from the plugin's `reset()`).
     pub fn reset(&mut self) {
         self.soundboard.reset();
         self.air.reset();
@@ -525,7 +488,6 @@ impl Instrument {
         self.live_voicing = LiveVoicingControls::default();
     }
 
-    /// Pressure at the listener — the audio output of the model.
     pub fn listener_pressure(&self) -> f64 {
         self.air.pressure_at_listener()
             + self
