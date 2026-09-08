@@ -17,7 +17,7 @@ This project aims to replicate and build upon the techniques presented in the pa
 
 ## Building
 
-Requires [cargo-nice-plug](https://github.com/robbert-vdh/nih-plug).
+Requires [cargo-nice-plug](https://codeberg.org/RustAudio/nice-plug).
 
 ```bash
 cargo nice-plug bundle unreal_piano --release
