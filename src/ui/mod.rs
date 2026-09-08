@@ -294,7 +294,6 @@ impl PianoGui {
 
         column![
             text("Unreal Piano").size(24),
-            text("physical modeling after arXiv:2409.03481").size(12),
             preset_row,
             row![
                 output_section,
