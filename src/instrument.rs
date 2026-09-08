@@ -82,6 +82,11 @@ fn velocity_hardness_curve(
     }
 }
 
+fn railsback_stretch_cents(note: usize) -> f64 {
+    let normalized = ((note as f64 - 60.0) / 48.0).clamp(-1.0, 1.0);
+    30.0 * normalized + 8.0 * normalized * normalized * normalized
+}
+
 pub fn note_design(
     midi_note: u8,
     controls: &StrikeVoicingControls,
@@ -89,14 +94,19 @@ pub fn note_design(
 ) -> NoteDesign {
     let note = midi_note.clamp(21, 108) as usize;
     let note_fraction = (note - 21) as f64 / 87.0;
-    let fundamental_frequency = 440.0 * ((note as f64 - 69.0) / 12.0).exp2();
+
+    let nominal_fundamental_frequency = 440.0 * ((note as f64 - 69.0) / 12.0).exp2();
+
+    let stretch_factor = 2.0_f64.powf(railsback_stretch_cents(note) / 1200.0);
+
+    let fundamental_frequency = nominal_fundamental_frequency * stretch_factor;
 
     let length_scale = controls.string_length_scale.clamp(0.8, 10.0);
 
     let base_speaking_length = if note >= 60 {
         0.62 * (0.052_f64 / 0.62).powf((note - 60) as f64 / 48.0)
     } else {
-        (0.62 * (261.6256 / fundamental_frequency).powf(0.90)).min(1.42)
+        (0.62 * (261.6256 / nominal_fundamental_frequency).powf(0.90)).min(1.42)
     };
 
     let speaking_length = base_speaking_length * length_scale;
@@ -138,7 +148,7 @@ pub fn note_design(
             stiffness_proportional_part: 2.5e-8,
         },
         longitudinal_damping: DampingCoefficients {
-            constant_part: 8.0e-3,
+            constant_part: 3.0e-3,
             stiffness_proportional_part: 0.0,
         },
     };
@@ -181,10 +191,10 @@ pub fn note_design(
     let lateral_misalignment_shift = soft_pedal * 1.5e-3;
 
     let hammer_noise_amplitude =
-        controls.hammer_noise.clamp(0.0, 3.0) * (0.5 + 2.5 * velocity_blend.clamp(0.0, 1.0));
+        controls.hammer_noise.clamp(0.0, 3.0) * (0.8 + 3.0 * velocity_blend.clamp(0.0, 1.0));
 
     let hammer_noise_cutoff_hz =
-        800.0 * 25.0_f64.powf((controls.hammer_tone.clamp(-1.0, 1.0) + 1.0) * 0.5);
+        1500.0 * 30.0_f64.powf((controls.hammer_tone.clamp(-1.0, 1.0) + 1.0) * 0.5);
 
     let unison_width = controls.unison_width.clamp(0.0, 20.0);
     let unison_relative_detunes = [-1.2, 0.4, 1.0].map(|detune| detune * unison_width * 1.0e-4);

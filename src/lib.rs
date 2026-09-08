@@ -467,19 +467,23 @@ impl UnrealPiano {
 
     fn start_release_for_voices(&mut self, voice_id: Option<i32>, channel: u8, note: u8) {
         self.held_keys[(note as usize).min(127)] = false;
-        // With the sustain pedal down the damper stays off the string.
-        if self.sustain_pedal_down {
-            return;
-        }
+
         let release_seconds = self.params.damper_release_ms.value() as f64 / 1000.0;
+
         for voice in self.voices.iter_mut().flatten() {
             let is_target = voice_id == Some(voice.voice_id)
                 || (channel == voice.channel && note == voice.note);
+
             if is_target {
-                voice.releasing = true;
-                voice
-                    .engine
-                    .start_release(release_seconds, SIMULATION_STEP_SIZE);
+                voice.engine.trigger_key_release_noise();
+
+                if !self.sustain_pedal_down {
+                    voice.releasing = true;
+                    voice
+                        .engine
+                        .start_release(release_seconds, SIMULATION_STEP_SIZE);
+                }
+
                 if voice_id.is_some() {
                     return;
                 }

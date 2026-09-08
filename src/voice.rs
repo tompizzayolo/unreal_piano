@@ -16,6 +16,13 @@ const MAXIMUM_UNISON_STRINGS: usize = 3;
 const HAMMER_NOISE_WINDOW_SECONDS: f64 = 12.0e-3;
 const HAMMER_NOISE_DECAY_SECONDS: f64 = 2.5e-3;
 
+const HAMMER_THUMP_BRIDGE_SCALE: f64 = 0.12;
+
+const KEY_RELEASE_NOISE_WINDOW_SECONDS: f64 = 0.030;
+const KEY_RELEASE_NOISE_DECAY_SECONDS: f64 = 0.009;
+const KEY_RELEASE_NOISE_AMPLITUDE: f64 = 0.05;
+const KEY_RELEASE_NOISE_CUTOFF_HZ: f64 = 850.0;
+
 const DUPLEX_FREQUENCY_RATIOS: [f64; 6] = [8.53, 10.47, 12.61, 15.13, 18.09, 21.47];
 const DUPLEX_MODAL_MASS: f64 = 1.0e-3;
 const DUPLEX_MODAL_DAMPING: f64 = 5.0e-4;
@@ -27,6 +34,11 @@ const DAMPER_AMPLITUDE_DECAY_LN: f64 = -6.907755278982137;
 pub struct PianoVoice {
     pub strings: Vec<PianoString>,
     pub hammer: Hammer,
+    strike_velocity: f64,
+    release_noise_seconds_remaining: f64,
+    release_noise_amplitude: f64,
+    release_noise_filter_state: f64,
+    release_noise_random_state: u64,
     previous_felt_compressions: [Vector3; MAXIMUM_UNISON_STRINGS],
     felt_contact_references: [Vector3; MAXIMUM_UNISON_STRINGS],
     grazing_contact_angle: f64,
@@ -133,6 +145,11 @@ impl PianoVoice {
         }
 
         PianoVoice {
+            strike_velocity: 0.0,
+            release_noise_seconds_remaining: 0.0,
+            release_noise_amplitude: 0.0,
+            release_noise_filter_state: 0.0,
+            release_noise_random_state: 0x2545_F491_4F6C_DD15,
             strings,
             hammer,
             previous_felt_compressions,
@@ -166,17 +183,75 @@ impl PianoVoice {
 
         self.hammer.angular_velocity = hammer_velocity / compression_rate_per_radian.max(1.0e-9);
 
+        self.strike_velocity = hammer_velocity;
+
         self.damper_decay_per_step = 1.0;
         self.hammer_noise_seconds_remaining = HAMMER_NOISE_WINDOW_SECONDS;
         self.hammer_noise_filter_state = 0.0;
         self.hammer_noise_random_state = noise_seed | 1;
+
         self.note_age_seconds = 0.0;
         self.blooming_envelope = 1.0;
+
+        self.release_noise_seconds_remaining = 0.0;
+        self.release_noise_amplitude = 0.0;
+        self.release_noise_filter_state = 0.0;
+        self.release_noise_random_state = noise_seed ^ 0x5A5A_5A5A_5A5A_5A5A | 1;
     }
 
     pub fn start_release(&mut self, release_seconds: f64, engine_step_size: f64) {
         let decay_rate = DAMPER_AMPLITUDE_DECAY_LN / release_seconds.max(1.0e-3);
         self.damper_decay_per_step = decay_rate.exp();
+    }
+
+    pub fn trigger_key_release_noise(&mut self) {
+        let velocity_scale = (self.strike_velocity / 4.0).clamp(0.2, 1.5);
+
+        self.release_noise_seconds_remaining = KEY_RELEASE_NOISE_WINDOW_SECONDS;
+        self.release_noise_amplitude = KEY_RELEASE_NOISE_AMPLITUDE * velocity_scale;
+        self.release_noise_filter_state = 0.0;
+
+        self.release_noise_random_state = self
+            .release_noise_random_state
+            .wrapping_add(0x9E37_79B9_7F4A_7C15)
+            | 1;
+    }
+
+    fn generate_release_noise_force(&mut self, step_size: f64) -> Vector3 {
+        if self.release_noise_seconds_remaining <= 0.0 || self.release_noise_amplitude <= 0.0 {
+            return Vector3::ZERO;
+        }
+
+        self.release_noise_seconds_remaining -= step_size;
+
+        let elapsed_seconds =
+            KEY_RELEASE_NOISE_WINDOW_SECONDS - self.release_noise_seconds_remaining.max(0.0);
+
+        let decay_envelope = (-(elapsed_seconds / KEY_RELEASE_NOISE_DECAY_SECONDS)).exp();
+
+        let mut random_state = self.release_noise_random_state;
+
+        random_state ^= random_state >> 12;
+        random_state ^= random_state << 25;
+        random_state ^= random_state >> 27;
+
+        self.release_noise_random_state = random_state;
+
+        let random_sample = 2.0
+            * ((random_state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64
+                / (1u64 << 53) as f64)
+            - 1.0;
+
+        let filter_coefficient = 1.0 - (-2.0 * PI * KEY_RELEASE_NOISE_CUTOFF_HZ * step_size).exp();
+
+        self.release_noise_filter_state +=
+            filter_coefficient * (random_sample - self.release_noise_filter_state);
+
+        Vector3::new(
+            0.0,
+            0.0,
+            self.release_noise_amplitude * self.release_noise_filter_state * decay_envelope,
+        )
     }
 
     pub fn apply_damper_step(&mut self) {
@@ -288,7 +363,7 @@ impl PianoVoice {
         }
 
         let hammer_noise_force = self.generate_hammer_noise_force(step_size);
-
+        let release_noise_force = self.generate_release_noise_force(step_size);
         let mut state_snapshot = Vec::new();
 
         if sweep_count > 1 {
@@ -379,7 +454,15 @@ impl PianoVoice {
             }
 
             bridge_force = voice_bridge_force * self.blooming_envelope;
-
+            if sweep_index == last_sweep_index {
+                bridge_force = bridge_force
+                    + Vector3::new(
+                        0.0,
+                        hammer_noise_force.z * 0.25 * HAMMER_THUMP_BRIDGE_SCALE,
+                        hammer_noise_force.z * HAMMER_THUMP_BRIDGE_SCALE,
+                    )
+                    + release_noise_force;
+            }
             hammer_angle_source = self.hammer.rotation_angle;
 
             let mut predicted_felt_compressions = [Vector3::ZERO; MAXIMUM_UNISON_STRINGS];
@@ -470,6 +553,8 @@ impl PianoVoice {
 
     pub fn is_silent(&self, energy_threshold: f64) -> bool {
         self.string_energy() < energy_threshold
+            && self.release_noise_seconds_remaining <= 0.0
+            && self.hammer_noise_seconds_remaining <= 0.0
     }
 
     fn write_state_snapshot(&self, snapshot: &mut Vec<f64>) {
