@@ -1,7 +1,7 @@
 # Unreal Piano
 
 **WIP physical-modeling-based piano synthesizer**
-Currently it is a total crap
+Currently it's a total crap
 
 ## Vision
 

@@ -1,2 +1,9 @@
+pub mod air;
+pub mod complex;
+pub mod hammer;
+pub mod modal;
+pub mod piano;
+pub mod rng;
 pub mod soundboard;
-pub mod voice;
+pub mod strings;
+pub mod vector;
