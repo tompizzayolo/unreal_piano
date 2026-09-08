@@ -1,12 +1,12 @@
-//! Iced editor: output gain, hammer velocity range, damper release, a peak
-//! meter and the active voice count.
-
+//! Iced editor: preset buttons, a horizontal row of parameter sections
+//! (Output / Voicing / Tuning / Design), a peak meter and the voice count.
+use crate::presets::{AdjustableParameter, PRESETS};
 use nice_plug::{editor::dpi::LogicalSize, prelude::*};
 use nice_plug_iced::{
     IcedNiceContext, PersistentState,
     iced::{
-        self, Center, PollSubNotifier, Subscription, Theme,
-        widget::{Column, ProgressBar, column, pick_list, row, slider, text},
+        self, Center, Element, Subscription, Theme,
+        widget::{Column, ProgressBar, Row, button, column, pick_list, row, slider, text},
     },
 };
 use std::sync::Arc;
@@ -14,9 +14,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::UnrealPianoParams;
 
-pub const MIN_WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(360.0, 560.0);
+pub const MIN_WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(920.0, 520.0);
+pub const INITIAL_WINDOW_SIZE: LogicalSize<f32> = LogicalSize::new(980.0, 660.0);
 pub const RESIZE_HINT: ResizeHint = ResizeHint::resizable().with_min_logical_size(MIN_WINDOW_SIZE);
 pub const INITIAL_SCALE_FACTOR: f32 = 1.0;
+
+/// Fixed width of each parameter section.
+const SECTION_WIDTH: f32 = 200.0;
 
 /// State shared between the editor and the audio thread.
 pub struct EditorSharedState {
@@ -30,16 +34,42 @@ pub enum Message {
     Poll,
     WindowResized,
     SetScaleFactor(f32),
-    GainChanged(f32),
-    MinimumStrikeChanged(f32),
-    MaximumStrikeChanged(f32),
-    DamperReleaseChanged(f32),
+    ParameterChanged {
+        which: AdjustableParameter,
+        normalized_value: f32,
+    },
+    PresetApplied {
+        preset_index: usize,
+    },
 }
 
 pub struct PianoGui {
     persistent_state: PersistentState<EditorSharedState>,
     ctx: IcedNiceContext,
     peak_meter_db: f32,
+}
+
+/// A labeled slider bound to one parameter.
+fn parameter_control(
+    label: &str,
+    param: &FloatParam,
+    which: AdjustableParameter,
+) -> Column<'static, Message> {
+    let readout = param.normalized_value_to_string(param.modulated_normalized_value(), true);
+    column![
+        text(format!("{}: {}", label, readout)),
+        slider(
+            0.0..=1.0,
+            param.modulated_normalized_value(),
+            move |normalized_value| Message::ParameterChanged {
+                which,
+                normalized_value
+            }
+        )
+        .step(0.001f32),
+    ]
+    .spacing(4.0)
+    .width(SECTION_WIDTH)
 }
 
 impl PianoGui {
@@ -82,25 +112,27 @@ impl PianoGui {
             Message::WindowResized => {
                 self.ctx.sync_window_size();
             }
-            Message::GainChanged(normalized_value) => {
-                setter.begin_set_parameter(&params.output_gain);
-                setter.set_parameter_normalized(&params.output_gain, normalized_value);
-                setter.end_set_parameter(&params.output_gain);
+            Message::ParameterChanged {
+                which,
+                normalized_value,
+            } => {
+                let param = which.param(params);
+                setter.begin_set_parameter(param);
+                setter.set_parameter_normalized(param, normalized_value);
+                setter.end_set_parameter(param);
             }
-            Message::MinimumStrikeChanged(normalized_value) => {
-                setter.begin_set_parameter(&params.minimum_strike_velocity);
-                setter.set_parameter_normalized(&params.minimum_strike_velocity, normalized_value);
-                setter.end_set_parameter(&params.minimum_strike_velocity);
-            }
-            Message::MaximumStrikeChanged(normalized_value) => {
-                setter.begin_set_parameter(&params.maximum_strike_velocity);
-                setter.set_parameter_normalized(&params.maximum_strike_velocity, normalized_value);
-                setter.end_set_parameter(&params.maximum_strike_velocity);
-            }
-            Message::DamperReleaseChanged(normalized_value) => {
-                setter.begin_set_parameter(&params.damper_release_ms);
-                setter.set_parameter_normalized(&params.damper_release_ms, normalized_value);
-                setter.end_set_parameter(&params.damper_release_ms);
+            Message::PresetApplied { preset_index } => {
+                if let Some(preset) = PRESETS.get(preset_index) {
+                    for assignment in preset.values.iter() {
+                        let param = assignment.parameter.param(params);
+                        setter.begin_set_parameter(param);
+                        setter.set_parameter_normalized(
+                            param,
+                            param.preview_normalized(assignment.value),
+                        );
+                        setter.end_set_parameter(param);
+                    }
+                }
             }
         }
     }
@@ -117,52 +149,35 @@ impl PianoGui {
             ScaleOption(2.0),
         ];
 
-        column![
-            text("Unreal Piano").size(24),
-            text("physical modeling after arXiv:2409.03481").size(12),
-            text(format!(
-                "Gain: {}",
-                params.output_gain.normalized_value_to_string(
-                    params.output_gain.modulated_normalized_value(),
-                    true
-                )
-            )),
-            slider(
-                0.0..=1.0,
-                params.output_gain.modulated_normalized_value(),
-                Message::GainChanged
-            )
-            .step(0.001f32),
-            text(format!(
-                "Min strike: {:.2} m/s",
-                params.minimum_strike_velocity.value()
-            )),
-            slider(
-                0.0..=1.0,
-                params.minimum_strike_velocity.modulated_normalized_value(),
-                Message::MinimumStrikeChanged
-            )
-            .step(0.001f32),
-            text(format!(
-                "Max strike: {:.2} m/s",
-                params.maximum_strike_velocity.value()
-            )),
-            slider(
-                0.0..=1.0,
-                params.maximum_strike_velocity.modulated_normalized_value(),
-                Message::MaximumStrikeChanged
-            )
-            .step(0.001f32),
-            text(format!(
-                "Damper: {:.0} ms",
-                params.damper_release_ms.value()
-            )),
-            slider(
-                0.0..=1.0,
-                params.damper_release_ms.modulated_normalized_value(),
-                Message::DamperReleaseChanged
-            )
-            .step(0.001f32),
+        let mut preset_buttons: Vec<Element<'_, Message>> = Vec::new();
+        for (preset_index, preset) in PRESETS.iter().enumerate() {
+            preset_buttons.push(
+                button(preset.name)
+                    .on_press(Message::PresetApplied { preset_index })
+                    .into(),
+            );
+        }
+        let preset_row = Row::with_children(preset_buttons).spacing(8.0);
+
+        // The four parameter sections, side by side.
+        let output_section = column![
+            text("Output").size(16),
+            parameter_control("Gain", &params.output_gain, AdjustableParameter::OutputGain),
+            parameter_control(
+                "Min strike",
+                &params.minimum_strike_velocity,
+                AdjustableParameter::MinimumStrike
+            ),
+            parameter_control(
+                "Max strike",
+                &params.maximum_strike_velocity,
+                AdjustableParameter::MaximumStrike
+            ),
+            parameter_control(
+                "Damper",
+                &params.damper_release_ms,
+                AdjustableParameter::Damper
+            ),
             ProgressBar::new(-60.0..=0.0, self.peak_meter_db.max(-60.0)),
             text(format!(
                 "voices: {}",
@@ -170,6 +185,115 @@ impl PianoGui {
                     .active_voice_count
                     .load(Ordering::Relaxed)
             )),
+        ]
+        .spacing(10.0);
+
+        let voicing_section = column![
+            text("Voicing").size(16),
+            parameter_control(
+                "Hammer hardness",
+                &params.hammer_hardness,
+                AdjustableParameter::HammerHardness
+            ),
+            parameter_control(
+                "Hardness piano",
+                &params.hammer_hardness_piano,
+                AdjustableParameter::HammerHardnessPiano
+            ),
+            parameter_control(
+                "Hardness mezzo",
+                &params.hammer_hardness_mezzo,
+                AdjustableParameter::HammerHardnessMezzo
+            ),
+            parameter_control(
+                "Hardness forte",
+                &params.hammer_hardness_forte,
+                AdjustableParameter::HammerHardnessForte
+            ),
+            parameter_control(
+                "Noise (min)",
+                &params.hammer_noise_min,
+                AdjustableParameter::HammerNoiseMinimum
+            ),
+            parameter_control(
+                "Noise (max)",
+                &params.hammer_noise_max,
+                AdjustableParameter::HammerNoiseMaximum
+            ),
+            parameter_control(
+                "Hammer tone",
+                &params.hammer_tone,
+                AdjustableParameter::HammerTone
+            ),
+            parameter_control(
+                "Soft pedal",
+                &params.soft_pedal,
+                AdjustableParameter::SoftPedal
+            ),
+        ]
+        .spacing(10.0);
+
+        let tuning_section = column![
+            text("Tuning").size(16),
+            parameter_control(
+                "Unison (min)",
+                &params.unison_width_min,
+                AdjustableParameter::UnisonWidthMinimum
+            ),
+            parameter_control(
+                "Unison (max)",
+                &params.unison_width_max,
+                AdjustableParameter::UnisonWidthMaximum
+            ),
+        ]
+        .spacing(10.0);
+
+        let design_section = column![
+            text("Design").size(16),
+            parameter_control(
+                "String length",
+                &params.string_length,
+                AdjustableParameter::StringLength
+            ),
+            parameter_control(
+                "Strike point",
+                &params.strike_point,
+                AdjustableParameter::StrikePoint
+            ),
+            parameter_control(
+                "Sympathetic res.",
+                &params.sympathetic_resonance,
+                AdjustableParameter::SympatheticResonance
+            ),
+            parameter_control(
+                "Duplex scale",
+                &params.duplex_scale_resonance,
+                AdjustableParameter::DuplexScale
+            ),
+            parameter_control(
+                "Blooming energy",
+                &params.blooming_energy,
+                AdjustableParameter::BloomingEnergy
+            ),
+            parameter_control(
+                "Blooming inertia",
+                &params.blooming_inertia,
+                AdjustableParameter::BloomingInertia
+            ),
+        ]
+        .spacing(10.0);
+
+        column![
+            text("Unreal Piano").size(24),
+            text("physical modeling after arXiv:2409.03481").size(12),
+            preset_row,
+            row![
+                output_section,
+                voicing_section,
+                tuning_section,
+                design_section,
+            ]
+            .spacing(24.0),
             row![
                 text("scale"),
                 pick_list(
@@ -182,7 +306,7 @@ impl PianoGui {
             .spacing(7.0),
         ]
         .padding(20)
-        .spacing(12.0)
+        .spacing(16.0)
         .align_x(Center)
     }
 }

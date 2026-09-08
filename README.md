@@ -1,7 +1,9 @@
 # Unreal Piano
 
 **WIP physical-modeling-based piano synthesizer**
-Currently it's a total crap
+Right now it's a total crap. It sounds like a stupid Ukulele or some sort of Koto
+Which is sort of a good sign I guess: piano is a string instrument, and so are these.
+But when you make Lasagna you usually want to get a Lasagna, not a Ukulele or Koto
 
 ## Vision
 
@@ -22,5 +24,3 @@ Requires [cargo-nice-plug](https://codeberg.org/RustAudio/nice-plug).
 ```bash
 cargo nice-plug bundle unreal_piano --release
 ```
-
-> **Status:** Work in progress. Expect things to break.

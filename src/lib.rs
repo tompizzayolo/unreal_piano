@@ -1,14 +1,6 @@
-//! Unreal Piano — the physical-modeling piano of arXiv:2409.03481 as a CLAP
-//! instrument.
-//!
-//! * every MIDI note owns a `voice::PianoVoice` (unison strings + hammer);
-//! * one shared `instrument::Instrument` (soundboard + air + room) is
-//!   advanced once for all voices with the explicit scheme of §7;
-//! * the engine runs at a fixed 48 kHz; output samples at the host's rate
-//!   are produced by linear interpolation of the listener-pressure signal.
-
 mod engine;
 mod instrument;
+mod presets;
 mod ui;
 mod voice;
 
@@ -22,11 +14,12 @@ use nice_plug_iced::{
 };
 
 use crate::engine::hammer::HammerGeometry;
+use crate::engine::rng::DeterministicRandom;
 use crate::instrument::{
-    Instrument, NoteDesign, SIMULATION_RATE_HZ, SIMULATION_STEP_SIZE, note_design,
-    shared_hammer_geometry,
+    Instrument, LiveVoicingControls, SIMULATION_RATE_HZ, SIMULATION_STEP_SIZE,
+    StrikeVoicingControls, note_design, shared_hammer_geometry,
 };
-use crate::ui::{EditorSharedState, INITIAL_SCALE_FACTOR, MIN_WINDOW_SIZE, RESIZE_HINT};
+use crate::ui::{EditorSharedState, INITIAL_SCALE_FACTOR, INITIAL_WINDOW_SIZE, RESIZE_HINT};
 use crate::voice::{PianoVoice, SynthVoice};
 
 /// Number of simultaneous voices.  The main CPU dial: each extra voice costs
@@ -38,7 +31,7 @@ const MAX_BLOCK_SIZE: usize = 64;
 const VOICE_ENERGY_EPSILON: f64 = 1.0e-9;
 /// Time for the peak meter to decay by 12 dB in silence [ms].
 const PEAK_METER_DECAY_MS: f64 = 150.0;
-/// Output-pressure ring size (2 lookahead points suffice; 8 is comfortable).
+/// Output-pressure ring size.
 const PRESSURE_RING_SIZE: u64 = 8;
 
 pub struct UnrealPiano {
@@ -50,8 +43,6 @@ pub struct UnrealPiano {
     instrument: Instrument,
     /// Hammer geometry shared by every note (only the felt law differs).
     shared_hammer_geometry: HammerGeometry,
-    /// Lazily computed per-note designs.
-    note_designs: Vec<Option<NoteDesign>>,
 
     voices: [Option<SynthVoice>; NUM_VOICES],
     next_internal_voice_id: u64,
@@ -78,12 +69,10 @@ impl Default for UnrealPiano {
         Self {
             params: Arc::new(UnrealPianoParams::default()),
 
-            editor_state: IcedEditorState::from_size(MIN_WINDOW_SIZE, INITIAL_SCALE_FACTOR),
+            editor_state: IcedEditorState::from_size(INITIAL_WINDOW_SIZE, INITIAL_SCALE_FACTOR),
 
             instrument: Instrument::new(20240903),
             shared_hammer_geometry: shared_hammer_geometry(),
-            note_designs: vec![None; 128],
-
             voices: [0; NUM_VOICES].map(|_| None),
             next_internal_voice_id: 0,
 
@@ -113,6 +102,44 @@ pub struct UnrealPianoParams {
     pub maximum_strike_velocity: FloatParam,
     #[id = "damper"]
     pub damper_release_ms: FloatParam,
+
+    // Voicing.
+    #[id = "hardness"]
+    pub hammer_hardness: FloatParam,
+    #[id = "hardness_p"]
+    pub hammer_hardness_piano: FloatParam,
+    #[id = "hardness_m"]
+    pub hammer_hardness_mezzo: FloatParam,
+    #[id = "hardness_f"]
+    pub hammer_hardness_forte: FloatParam,
+    #[id = "hammer_noise_min"]
+    pub hammer_noise_min: FloatParam,
+    #[id = "hammer_noise_max"]
+    pub hammer_noise_max: FloatParam,
+    #[id = "hammer_tone"]
+    pub hammer_tone: FloatParam,
+    #[id = "soft_pedal"]
+    pub soft_pedal: FloatParam,
+
+    // Tuning.
+    #[id = "unison_width_min"]
+    pub unison_width_min: FloatParam,
+    #[id = "unison_width_max"]
+    pub unison_width_max: FloatParam,
+
+    // Design.
+    #[id = "string_length"]
+    pub string_length: FloatParam,
+    #[id = "strike_point"]
+    pub strike_point: FloatParam,
+    #[id = "sympathetic"]
+    pub sympathetic_resonance: FloatParam,
+    #[id = "duplex"]
+    pub duplex_scale_resonance: FloatParam,
+    #[id = "bloom_energy"]
+    pub blooming_energy: FloatParam,
+    #[id = "bloom_inertia"]
+    pub blooming_inertia: FloatParam,
 }
 
 impl Default for UnrealPianoParams {
@@ -120,10 +147,10 @@ impl Default for UnrealPianoParams {
         Self {
             output_gain: FloatParam::new(
                 "Gain",
-                0.0,
+                util::db_to_gain(0.0),
                 FloatRange::Linear {
-                    min: util::db_to_gain(0.0),
-                    max: util::db_to_gain(10.0),
+                    min: 0.0,
+                    max: 10.0,
                 },
             )
             .with_smoother(SmoothingStyle::Logarithmic(50.0))
@@ -153,6 +180,136 @@ impl Default for UnrealPianoParams {
             )
             .with_step_size(1.0)
             .with_unit(" ms"),
+
+            // Voicing.
+            hammer_hardness: FloatParam::new(
+                "Hammer Hardness",
+                0.0,
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
+            )
+            .with_step_size(0.01),
+            hammer_hardness_piano: FloatParam::new(
+                "Hardness Piano",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_step_size(0.01),
+            hammer_hardness_mezzo: FloatParam::new(
+                "Hardness Mezzo",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_step_size(0.01),
+            hammer_hardness_forte: FloatParam::new(
+                "Hardness Forte",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_step_size(0.01),
+            hammer_noise_min: FloatParam::new(
+                "Hammer Noise Min",
+                0.9,
+                FloatRange::Linear { min: 0.1, max: 3.0 },
+            )
+            .with_step_size(0.01),
+            hammer_noise_max: FloatParam::new(
+                "Hammer Noise Max",
+                1.1,
+                FloatRange::Linear { min: 0.1, max: 3.0 },
+            )
+            .with_step_size(0.01),
+            hammer_tone: FloatParam::new(
+                "Hammer Tone",
+                0.0,
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
+            )
+            .with_step_size(0.01),
+            soft_pedal: FloatParam::new(
+                "Soft Pedal",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_step_size(0.01),
+
+            // Tuning.
+            unison_width_min: FloatParam::new(
+                "Unison Width Min",
+                9.5,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 20.0,
+                },
+            )
+            .with_step_size(0.1),
+            unison_width_max: FloatParam::new(
+                "Unison Width Max",
+                10.5,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 20.0,
+                },
+            )
+            .with_step_size(0.1),
+
+            // Design.
+            string_length: FloatParam::new(
+                "String Length",
+                1.0,
+                FloatRange::Linear {
+                    min: 0.8,
+                    max: 10.0,
+                },
+            )
+            .with_step_size(0.01)
+            .with_unit(" m"),
+            strike_point: FloatParam::new(
+                "Strike Point",
+                0.122,
+                FloatRange::Linear {
+                    min: 1.0 / 64.0,
+                    max: 0.5,
+                },
+            )
+            .with_step_size(0.001)
+            .with_unit(" x L"),
+            sympathetic_resonance: FloatParam::new(
+                "Sympathetic Resonance",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 5.0 },
+            )
+            .with_step_size(0.01),
+            duplex_scale_resonance: FloatParam::new(
+                "Duplex Scale Resonance",
+                1.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 20.0,
+                },
+            )
+            .with_step_size(0.1),
+            blooming_energy: FloatParam::new(
+                "Blooming Energy",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_step_size(0.01),
+            blooming_inertia: FloatParam::new(
+                "Blooming Inertia",
+                1.0,
+                FloatRange::Skewed {
+                    min: 0.1,
+                    max: 3.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_step_size(0.01)
+            .with_unit(" s"),
         }
     }
 }
@@ -242,6 +399,14 @@ impl Plugin for UnrealPiano {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        // Live voicing controls, read once per process call.
+        self.instrument.live_voicing = LiveVoicingControls {
+            sympathetic_resonance: self.params.sympathetic_resonance.value() as f64,
+            duplex_scale: self.params.duplex_scale_resonance.value() as f64,
+            blooming_energy: self.params.blooming_energy.value() as f64,
+            blooming_inertia: self.params.blooming_inertia.value() as f64,
+        };
+
         let num_samples = buffer.samples();
         let output = buffer.as_slice();
 
@@ -283,16 +448,9 @@ impl Plugin for UnrealPiano {
                             } => {
                                 self.choke_voices(context, timing, voice_id, channel, note);
                             }
-                            // Sustain pedal (MIDI CC 64).  If your nice-plug
-                            // version's `NoteEvent` has no `MidiCC` variant,
-                            // delete this arm — everything else is unaffected.
-                            // `value` here is the raw MIDI byte 0..=127; if
-                            // your version normalizes it to 0..=1, compare
-                            // against 0.5 instead.
                             // Sustain pedal (MIDI CC 64).  `value` is an f32
-                            // normalized to 0..=1 in this nice-plug version;
-                            // the else-branch also tolerates a raw 0..=127
-                            // encoding just in case.
+                            // normalized to 0..=1; the else-branch also
+                            // tolerates a raw 0..=127 encoding just in case.
                             NoteEvent::MidiCC {
                                 timing: _,
                                 channel: _,
@@ -384,11 +542,6 @@ impl Plugin for UnrealPiano {
 }
 
 impl UnrealPiano {
-    fn design_for_note(&mut self, note: u8) -> NoteDesign {
-        let slot = &mut self.note_designs[(note as usize).min(127)];
-        *slot.get_or_insert_with(|| note_design(note))
-    }
-
     /// Render one output sample: advance the engine far enough to cover the
     /// fractional engine position of this sample, then linearly interpolate
     /// the listener pressure.
@@ -428,10 +581,68 @@ impl UnrealPiano {
         let hammer_velocity = (minimum_strike_velocity
             + (maximum_strike_velocity - minimum_strike_velocity) * velocity as f64)
             .clamp(0.05, 12.0);
+        // Position of this strike inside the dynamic range (0..1), used for
+        // the piano/mezzo/forte hardness curve.
+        let velocity_blend = ((hammer_velocity - minimum_strike_velocity)
+            / (maximum_strike_velocity - minimum_strike_velocity).max(1.0e-3))
+        .clamp(0.0, 1.0);
 
-        let design = self.design_for_note(note);
+        let noise_seed = self
+            .next_internal_voice_id
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ ((note as u64) << 32);
+        let mut strike_randomness = DeterministicRandom::new(noise_seed);
+        let (noise_minimum, noise_maximum) = ordered_range(
+            self.params.hammer_noise_min.value() as f64,
+            self.params.hammer_noise_max.value() as f64,
+        );
+        let (unison_minimum, unison_maximum) = ordered_range(
+            self.params.unison_width_min.value() as f64,
+            self.params.unison_width_max.value() as f64,
+        );
+        let hammer_noise_level =
+            noise_minimum + (noise_maximum - noise_minimum) * strike_randomness.unit_interval();
+        let unison_width_level =
+            unison_minimum + (unison_maximum - unison_minimum) * strike_randomness.unit_interval();
+
+        let strike_controls = StrikeVoicingControls {
+            hammer_hardness: self.params.hammer_hardness.value() as f64,
+            hammer_hardness_piano: self.params.hammer_hardness_piano.value() as f64,
+            hammer_hardness_mezzo: self.params.hammer_hardness_mezzo.value() as f64,
+            hammer_hardness_forte: self.params.hammer_hardness_forte.value() as f64,
+            hammer_noise: hammer_noise_level,
+            hammer_tone: self.params.hammer_tone.value() as f64,
+            soft_pedal: self.params.soft_pedal.value() as f64,
+            unison_width: unison_width_level,
+            string_length_scale: self.params.string_length.value() as f64,
+            strike_point_ratio: self.params.strike_point.value() as f64,
+        };
+
+        let design = note_design(note, &strike_controls, velocity_blend);
         let mut engine_voice = PianoVoice::new(&design, self.shared_hammer_geometry);
-        engine_voice.strike(hammer_velocity);
+
+        // A re-strike physically hits the *same* ringing strings: inherit
+        // the string state of any existing voice on this key, then retire
+        // that voice (one string group per key).
+        for existing_slot in self.voices.iter_mut() {
+            let is_same_key = match existing_slot {
+                Some(existing) => existing.note == note && existing.channel == channel,
+                None => false,
+            };
+            if is_same_key {
+                if let Some(existing) = existing_slot.take() {
+                    engine_voice.adopt_string_state_from(&existing.engine);
+                    context.send_event(NoteEvent::VoiceTerminated {
+                        timing: sample_offset,
+                        voice_id: Some(existing.voice_id),
+                        channel: existing.channel,
+                        note: existing.note,
+                    });
+                }
+            }
+        }
+
+        engine_voice.strike(hammer_velocity, noise_seed);
 
         let new_voice = SynthVoice {
             voice_id: voice_id.unwrap_or_else(|| compute_fallback_voice_id(note, channel)),
@@ -504,13 +715,13 @@ impl UnrealPiano {
             return;
         }
         // Pedal lifted: damp every voice whose key is no longer held.
-        let release_seconds = self.params.damper_release_ms.value() / 1000.0;
+        let release_seconds = self.params.damper_release_ms.value() as f64 / 1000.0;
         for voice in self.voices.iter_mut().flatten() {
             if !self.held_keys[(voice.note as usize).min(127)] {
                 voice.releasing = true;
                 voice
                     .engine
-                    .start_release(release_seconds as f64, SIMULATION_STEP_SIZE);
+                    .start_release(release_seconds, SIMULATION_STEP_SIZE);
             }
         }
     }
@@ -548,6 +759,15 @@ impl UnrealPiano {
     }
 }
 
+/// Order a min/max parameter pair (so a reversed pair still works).
+fn ordered_range(first: f64, second: f64) -> (f64, f64) {
+    if first <= second {
+        (first, second)
+    } else {
+        (second, first)
+    }
+}
+
 const fn compute_fallback_voice_id(note: u8, channel: u8) -> i32 {
     note as i32 | ((channel as i32) << 16)
 }
@@ -565,4 +785,11 @@ impl ClapPlugin for UnrealPiano {
     ];
 }
 
+impl Vst3Plugin for UnrealPiano {
+    const VST3_CLASS_ID: [u8; 16] = *b"UnrealPianoClap1";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
+}
+
 nice_export_clap!(UnrealPiano);
+nice_export_vst3!(UnrealPiano);
