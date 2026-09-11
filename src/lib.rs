@@ -5,7 +5,7 @@ mod presets;
 mod ui;
 mod voice;
 
-pub use params::UnrealPianoParams;
+pub use params::ShadeParams;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -29,8 +29,8 @@ const VOICE_ENERGY_EPSILON: f64 = 1.0e-9;
 const PEAK_METER_DECAY_MS: f64 = 150.0;
 const PRESSURE_RING_SIZE: u64 = 8;
 
-pub struct UnrealPiano {
-    params: Arc<UnrealPianoParams>,
+pub struct Shade {
+    params: Arc<ShadeParams>,
     editor_state: Arc<EguiEditorState>,
     instrument: Instrument,
     shared_hammer_geometry: HammerGeometry,
@@ -49,9 +49,9 @@ pub struct UnrealPiano {
     initial_editor: Option<ui::PianoEditor>,
 }
 
-impl Default for UnrealPiano {
+impl Default for Shade {
     fn default() -> Self {
-        let params = Arc::new(UnrealPianoParams::default());
+        let params = Arc::new(ShadeParams::default());
         let peak_meter = Arc::new(AtomicF32::new(util::MINUS_INFINITY_DB));
         let active_voice_count = Arc::new(AtomicU32::new(0));
 
@@ -85,10 +85,10 @@ impl Default for UnrealPiano {
     }
 }
 
-impl Plugin for UnrealPiano {
-    const NAME: &'static str = "Unreal Piano";
-    const VENDOR: &'static str = "UnrealPiano";
-    const URL: &'static str = "https://example.com/unreal-piano";
+impl Plugin for Shade {
+    const NAME: &'static str = "Shade";
+    const VENDOR: &'static str = "Tom Pizza";
+    const URL: &'static str = "https://example.com/shade-keys";
     const EMAIL: &'static str = "info@example.com";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
@@ -278,7 +278,7 @@ impl Plugin for UnrealPiano {
     }
 }
 
-impl UnrealPiano {
+impl Shade {
     fn render_one_output_sample(&mut self) -> f64 {
         let engine_position =
             self.output_samples_rendered as f64 * self.engine_steps_per_output_sample;
@@ -495,10 +495,9 @@ fn ordered_range(first: f64, second: f64) -> (f64, f64) {
     }
 }
 
-impl ClapPlugin for UnrealPiano {
-    const CLAP_ID: &'static str = "com.unrealpiano.unreal-piano";
-    const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("A physical-modeling piano after arXiv:2409.03481");
+impl ClapPlugin for Shade {
+    const CLAP_ID: &'static str = "com.shade.shade-keys";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("A paino-like synth");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[
@@ -508,11 +507,11 @@ impl ClapPlugin for UnrealPiano {
     ];
 }
 
-impl Vst3Plugin for UnrealPiano {
+impl Vst3Plugin for Shade {
     const VST3_CLASS_ID: [u8; 16] = *b"UnrealPianoClap1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
-nice_export_clap!(UnrealPiano);
-nice_export_vst3!(UnrealPiano);
+nice_export_clap!(Shade);
+nice_export_vst3!(Shade);

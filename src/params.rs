@@ -1,7 +1,7 @@
 use nice_plug::prelude::*;
 
 #[derive(Params)]
-pub struct UnrealPianoParams {
+pub struct ShadeParams {
     #[id = "gain"]
     pub output_gain: FloatParam,
     #[id = "min_strike"]
@@ -44,7 +44,7 @@ pub struct UnrealPianoParams {
     pub blooming_inertia: FloatParam,
 }
 
-impl Default for UnrealPianoParams {
+impl Default for ShadeParams {
     fn default() -> Self {
         Self {
             output_gain: FloatParam::new(

@@ -1,6 +1,6 @@
 use nice_plug::prelude::*;
 
-use crate::UnrealPianoParams;
+use crate::ShadeParams;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AdjustableParameter {
@@ -27,7 +27,7 @@ pub enum AdjustableParameter {
 }
 
 impl AdjustableParameter {
-    pub fn param<'a>(&self, params: &'a UnrealPianoParams) -> &'a FloatParam {
+    pub fn param<'a>(&self, params: &'a ShadeParams) -> &'a FloatParam {
         match self {
             AdjustableParameter::OutputGain => &params.output_gain,
             AdjustableParameter::MinimumStrike => &params.minimum_strike_velocity,

@@ -1,4 +1,4 @@
-use crate::UnrealPianoParams;
+use crate::ShadeParams;
 use crate::presets::PRESETS;
 use nice_plug::context::gui::ParamSetter;
 use nice_plug::{editor::dpi::LogicalSize, prelude::*};
@@ -15,14 +15,14 @@ pub const RESIZE_HINT: ResizeHint = ResizeHint::resizable().with_min_logical_siz
 pub const INITIAL_SCALE_FACTOR: f32 = 1.0;
 
 pub struct EditorSharedState {
-    pub params: Arc<UnrealPianoParams>,
+    pub params: Arc<ShadeParams>,
     pub peak_meter: Arc<AtomicF32>,
     pub active_voice_count: Arc<AtomicU32>,
 }
 
 pub struct PianoEditor {
     open_state: Option<OpenEditorState>,
-    params: Arc<UnrealPianoParams>,
+    params: Arc<ShadeParams>,
     peak_meter: Arc<AtomicF32>,
     active_voice_count: Arc<AtomicU32>,
     zoom_factor: f32,
@@ -65,13 +65,13 @@ impl NiceEguiApp for PianoEditor {
         };
         let setter = state.nice_gui_ctx.param_setter();
 
-        ResizableWindow::new("unreal-piano-window")
+        ResizableWindow::new("shade-keys-window")
             .min_size(egui::vec2(MIN_WINDOW_SIZE.width, MIN_WINDOW_SIZE.height))
             .show(ui, |ui| {
                 egui::Frame::new()
                     .inner_margin(egui::Margin::same(16))
                     .show(ui, |ui| {
-                        ui.heading("Unreal Piano");
+                        ui.heading("Shade");
                         ui.add_space(8.0);
 
                         ui.horizontal(|ui| {
