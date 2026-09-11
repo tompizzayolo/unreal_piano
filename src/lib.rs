@@ -41,7 +41,8 @@ pub struct Shade {
     engine_steps_rendered: u64,
     output_samples_rendered: u64,
     engine_steps_per_output_sample: f64,
-    pressure_ring: Vec<f64>,
+    pressure_ring_left: Vec<f64>,
+    pressure_ring_right: Vec<f64>,
     peak_meter: Arc<AtomicF32>,
     peak_meter_decay_weight: f32,
     active_voice_count: Arc<AtomicU32>,
@@ -75,7 +76,8 @@ impl Default for Shade {
             engine_steps_rendered: 0,
             output_samples_rendered: 0,
             engine_steps_per_output_sample: 1.0,
-            pressure_ring: vec![0.0; PRESSURE_RING_SIZE as usize],
+            pressure_ring_left: vec![0.0; PRESSURE_RING_SIZE as usize],
+            pressure_ring_right: vec![0.0; PRESSURE_RING_SIZE as usize],
             peak_meter,
             peak_meter_decay_weight: 1.0,
             active_voice_count,
@@ -127,7 +129,8 @@ impl Plugin for Shade {
         self.sustain_pedal_down = false;
         self.engine_steps_rendered = 0;
         self.output_samples_rendered = 0;
-        self.pressure_ring.fill(0.0);
+        self.pressure_ring_left.fill(0.0);
+        self.pressure_ring_right.fill(0.0);
         self.peak_meter
             .store(util::MINUS_INFINITY_DB, Ordering::Relaxed);
     }
@@ -161,6 +164,7 @@ impl Plugin for Shade {
         let num_samples = buffer.samples();
         let output = buffer.as_slice();
         let mut next_event = context.next_event();
+
         let mut block_start: usize = 0;
         let mut block_end: usize = MAX_BLOCK_SIZE.min(num_samples);
 
@@ -220,14 +224,17 @@ impl Plugin for Shade {
             }
 
             for sample_index in block_start..block_end {
-                let engine_sample = self.render_one_output_sample();
+                let (left_engine, right_engine) = self.render_one_output_sample();
                 let gain = self.params.output_gain.smoothed.next();
-                let output_sample = engine_sample as f32 * gain;
-                output[0][sample_index] = output_sample;
-                output[1][sample_index] = output_sample;
+
+                let left_sample = left_engine as f32 * gain;
+                let right_sample = right_engine as f32 * gain;
+
+                output[0][sample_index] = left_sample;
+                output[1][sample_index] = right_sample;
 
                 if self.editor_state.is_open() {
-                    let amplitude = output_sample.abs();
+                    let amplitude = left_sample.abs().max(right_sample.abs());
                     let current_peak = self.peak_meter.load(Ordering::Relaxed);
                     let new_peak = if amplitude > current_peak {
                         amplitude
@@ -279,26 +286,30 @@ impl Plugin for Shade {
 }
 
 impl Shade {
-    fn render_one_output_sample(&mut self) -> f64 {
+    fn render_one_output_sample(&mut self) -> (f64, f64) {
         let engine_position =
             self.output_samples_rendered as f64 * self.engine_steps_per_output_sample;
         let base_step = engine_position.floor() as u64;
         let fraction = engine_position - base_step as f64;
 
         while self.engine_steps_rendered < base_step + 2 {
-            let pressure = self.instrument.step(&mut self.voices);
+            let (left, right) = self.instrument.step(&mut self.voices);
             let ring_index = (self.engine_steps_rendered % PRESSURE_RING_SIZE) as usize;
-            self.pressure_ring[ring_index] = pressure;
+            self.pressure_ring_left[ring_index] = left;
+            self.pressure_ring_right[ring_index] = right;
             self.engine_steps_rendered += 1;
         }
 
-        let sample_at_base_step = self.pressure_ring[(base_step % PRESSURE_RING_SIZE) as usize];
-        let sample_at_base_step_plus_one =
-            self.pressure_ring[((base_step + 1) % PRESSURE_RING_SIZE) as usize];
+        let idx = (base_step % PRESSURE_RING_SIZE) as usize;
+        let idx1 = ((base_step + 1) % PRESSURE_RING_SIZE) as usize;
+
+        let left_sample = self.pressure_ring_left[idx]
+            + (self.pressure_ring_left[idx1] - self.pressure_ring_left[idx]) * fraction;
+        let right_sample = self.pressure_ring_right[idx]
+            + (self.pressure_ring_right[idx1] - self.pressure_ring_right[idx]) * fraction;
 
         self.output_samples_rendered += 1;
-
-        sample_at_base_step + (sample_at_base_step_plus_one - sample_at_base_step) * fraction
+        (left_sample, right_sample)
     }
 
     fn start_voice(
@@ -316,7 +327,6 @@ impl Shade {
         let hammer_velocity = (minimum_strike_velocity
             + (maximum_strike_velocity - minimum_strike_velocity) * velocity as f64)
             .clamp(0.05, 12.0);
-
         let velocity_blend = ((hammer_velocity - minimum_strike_velocity)
             / (maximum_strike_velocity - minimum_strike_velocity).max(1.0e-3))
         .clamp(0.0, 1.0);
@@ -325,7 +335,6 @@ impl Shade {
             .next_internal_voice_id
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ ((note as u64) << 32);
-
         let mut strike_randomness = DeterministicRandom::new(noise_seed);
 
         let (noise_minimum, noise_maximum) = ordered_range(
@@ -422,6 +431,7 @@ impl Shade {
     fn start_release_for_voices(&mut self, voice_id: VoiceID, channel: Channel, key: Key) {
         let note = key.number().unwrap_or(0);
         self.held_keys[(note as usize).min(127)] = false;
+
         let release_seconds = self.params.damper_release_ms.value() as f64 / 1000.0;
 
         for voice in self.voices.iter_mut().flatten() {
@@ -444,9 +454,11 @@ impl Shade {
             return;
         }
         self.sustain_pedal_down = pedal_down;
+
         if pedal_down {
             return;
         }
+
         let release_seconds = self.params.damper_release_ms.value() as f64 / 1000.0;
         for voice in self.voices.iter_mut().flatten() {
             if !self.held_keys[(voice.note as usize).min(127)] {
@@ -497,7 +509,7 @@ fn ordered_range(first: f64, second: f64) -> (f64, f64) {
 
 impl ClapPlugin for Shade {
     const CLAP_ID: &'static str = "com.shade.shade-keys";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("A paino-like synth");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("A piano-like synth");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[

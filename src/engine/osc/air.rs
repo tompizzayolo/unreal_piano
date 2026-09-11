@@ -1,12 +1,8 @@
-// use super::complex::Complex64;
-// use super::modal::ComplexModalMode;
-// use super::vector::Vector3;
-use std::f64::consts::PI;
-
 use crate::engine::{
     math::{complex::Complex64, vector::Vector3},
     osc::modal::ComplexModalMode,
 };
+use std::f64::consts::PI;
 
 pub struct AirRoomDesign {
     pub room_dimensions: Vector3,
@@ -14,16 +10,19 @@ pub struct AirRoomDesign {
     pub air_density: f64,
     pub highest_modeled_frequency: f64,
     pub soundboard_position: Vector3,
-    pub listener_position: Vector3,
+    pub listener_left_position: Vector3,
+    pub listener_right_position: Vector3,
 }
 
 pub struct AirRoom {
     pub modal_states: Vec<ComplexModalMode>,
     pub mode_shape_at_soundboard: Vec<f64>,
-    pub mode_shape_at_listener: Vec<f64>,
+    pub mode_shape_at_listener_left: Vec<f64>,
+    pub mode_shape_at_listener_right: Vec<f64>,
     source_gain_per_volume_velocity: Vec<Complex64>,
     soundboard_pressure_coefficients: Vec<f64>,
-    listener_pressure_coefficients: Vec<f64>,
+    listener_pressure_coefficients_left: Vec<f64>,
+    listener_pressure_coefficients_right: Vec<f64>,
 }
 
 #[inline]
@@ -37,13 +36,16 @@ impl AirRoom {
 
         let mut modal_states = Vec::with_capacity(num_modes);
         let mut mode_shape_at_soundboard = Vec::with_capacity(num_modes);
-        let mut mode_shape_at_listener = Vec::with_capacity(num_modes);
+        let mut mode_shape_at_listener_left = Vec::with_capacity(num_modes);
+        let mut mode_shape_at_listener_right = Vec::with_capacity(num_modes);
         let mut source_gain_per_volume_velocity = Vec::with_capacity(num_modes);
         let mut soundboard_pressure_coefficients = Vec::with_capacity(num_modes);
-        let mut listener_pressure_coefficients = Vec::with_capacity(num_modes);
+        let mut listener_pressure_coefficients_left = Vec::with_capacity(num_modes);
+        let mut listener_pressure_coefficients_right = Vec::with_capacity(num_modes);
 
         let norm_pos_sb = design.soundboard_position.x / design.room_dimensions.x;
-        let norm_pos_lis = design.listener_position.x / design.room_dimensions.x;
+        let norm_pos_lis_left = design.listener_left_position.x / design.room_dimensions.x;
+        let norm_pos_lis_right = design.listener_right_position.x / design.room_dimensions.x;
 
         let base_frequency = design.speed_of_sound / (2.0 * design.room_dimensions.x);
         let density_c2 = design.air_density * design.speed_of_sound * design.speed_of_sound;
@@ -52,19 +54,21 @@ impl AirRoom {
             let inharmonicity = 0.0005;
             let freq = base_frequency * i as f64 * (1.0 + inharmonicity * i as f64 * i as f64);
             let angular_frequency = 2.0 * PI * freq;
-
             let damping_ratio = (0.01 + 0.0005 * i as f64).clamp(1.0e-4, 0.5);
 
             let shape_sb = simplified_mode_shape(i, norm_pos_sb);
-            let shape_lis = simplified_mode_shape(i, norm_pos_lis);
+            let shape_lis_left = simplified_mode_shape(i, norm_pos_lis_left);
+            let shape_lis_right = simplified_mode_shape(i, norm_pos_lis_right);
 
             modal_states.push(ComplexModalMode::new(angular_frequency, damping_ratio));
 
             mode_shape_at_soundboard.push(shape_sb);
-            mode_shape_at_listener.push(shape_lis);
+            mode_shape_at_listener_left.push(shape_lis_left);
+            mode_shape_at_listener_right.push(shape_lis_right);
 
             soundboard_pressure_coefficients.push(2.0 * shape_sb);
-            listener_pressure_coefficients.push(2.0 * shape_lis);
+            listener_pressure_coefficients_left.push(2.0 * shape_lis_left);
+            listener_pressure_coefficients_right.push(2.0 * shape_lis_right);
 
             let damped_frequency = angular_frequency * (1.0 - damping_ratio * damping_ratio).sqrt();
             let complex_eigenvalue =
@@ -85,10 +89,12 @@ impl AirRoom {
         AirRoom {
             modal_states,
             mode_shape_at_soundboard,
-            mode_shape_at_listener,
+            mode_shape_at_listener_left,
+            mode_shape_at_listener_right,
             source_gain_per_volume_velocity,
             soundboard_pressure_coefficients,
-            listener_pressure_coefficients,
+            listener_pressure_coefficients_left,
+            listener_pressure_coefficients_right,
         }
     }
 
@@ -111,7 +117,6 @@ impl AirRoom {
     #[inline]
     pub fn pressure_at_soundboard(&self) -> f64 {
         let mut pressure = 0.0;
-
         for (mode, coefficient) in self
             .modal_states
             .iter()
@@ -119,22 +124,32 @@ impl AirRoom {
         {
             pressure += coefficient * mode.state.real_part;
         }
-
         pressure
     }
 
     #[inline]
-    pub fn pressure_at_listener(&self) -> f64 {
+    pub fn pressure_at_listener_left(&self) -> f64 {
         let mut pressure = 0.0;
-
         for (mode, coefficient) in self
             .modal_states
             .iter()
-            .zip(self.listener_pressure_coefficients.iter())
+            .zip(self.listener_pressure_coefficients_left.iter())
         {
             pressure += coefficient * mode.state.real_part;
         }
+        pressure
+    }
 
+    #[inline]
+    pub fn pressure_at_listener_right(&self) -> f64 {
+        let mut pressure = 0.0;
+        for (mode, coefficient) in self
+            .modal_states
+            .iter()
+            .zip(self.listener_pressure_coefficients_right.iter())
+        {
+            pressure += coefficient * mode.state.real_part;
+        }
         pressure
     }
 

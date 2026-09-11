@@ -9,7 +9,6 @@ use std::f64::consts::PI;
 pub const SIMULATION_RATE_HZ: f64 = 48_000.0;
 pub const SIMULATION_STEP_SIZE: f64 = 1.0 / SIMULATION_RATE_HZ;
 pub const COUPLING_SWEEPS: usize = 1;
-
 const RINGOUT_SECONDS: f64 = 0.75;
 
 #[inline]
@@ -94,22 +93,19 @@ pub fn note_design(
 ) -> NoteDesign {
     let note = midi_note.clamp(21, 108) as usize;
     let note_fraction = (note - 21) as f64 / 87.0;
-
     let nominal_fundamental_frequency = 440.0 * ((note as f64 - 69.0) / 12.0).exp2();
 
     let stretch_factor = 2.0_f64.powf(railsback_stretch_cents(note) / 1200.0);
-
     let fundamental_frequency = nominal_fundamental_frequency * stretch_factor;
 
     let length_scale = controls.string_length_scale.clamp(0.8, 10.0);
-
     let base_speaking_length = if note >= 60 {
         0.62 * (0.052_f64 / 0.62).powf((note - 60) as f64 / 48.0)
     } else {
         (0.62 * (261.6256 / nominal_fundamental_frequency).powf(0.90)).min(1.42)
     };
-
     let speaking_length = base_speaking_length * length_scale;
+
     let strike_ratio = controls.strike_point_ratio.clamp(1.0 / 64.0, 0.5);
 
     let core_radius = if note <= 45 {
@@ -121,9 +117,7 @@ pub fn note_design(
     };
 
     let tension = linear_interpolation(750.0, 550.0, note_fraction) * length_scale * length_scale;
-
     let linear_mass_density = tension / (2.0 * speaking_length * fundamental_frequency).powi(2);
-
     let effective_density = (linear_mass_density / (PI * core_radius * core_radius)).max(7850.0);
 
     let highest_modeled_frequency = (24.0 * fundamental_frequency)
@@ -159,11 +153,8 @@ pub fn note_design(
         controls.hammer_hardness_mezzo,
         controls.hammer_hardness_forte,
     );
-
     let effective_hardness = (controls.hammer_hardness + velocity_hardness - 1.0).clamp(-3.0, 3.0);
-
     let stiffness_multiplier = 2.0_f64.powf(effective_hardness * 1.5);
-
     let base_felt_stiffness =
         linear_interpolation(9.0e10, 4.5e11, note_fraction) * stiffness_multiplier;
 
@@ -192,7 +183,6 @@ pub fn note_design(
 
     let hammer_noise_amplitude =
         controls.hammer_noise.clamp(0.0, 3.0) * (0.8 + 3.0 * velocity_blend.clamp(0.0, 1.0));
-
     let hammer_noise_cutoff_hz =
         1500.0 * 30.0_f64.powf((controls.hammer_tone.clamp(-1.0, 1.0) + 1.0) * 0.5);
 
@@ -236,130 +226,10 @@ pub fn shared_hammer_geometry() -> HammerGeometry {
     }
 }
 
-struct SoundPath {
-    delay_seconds: f64,
-    gain: f64,
-}
-
-struct DirectAndEarlyField {
-    sound_paths: Vec<SoundPath>,
-}
-
-impl DirectAndEarlyField {
-    fn new(
-        room_dimensions: Vector3,
-        soundboard_position: Vector3,
-        listener_position: Vector3,
-        air_density: f64,
-        speed_of_sound: f64,
-        wall_reflection_factor: f64,
-    ) -> Self {
-        let distance_between = |from: Vector3, to: Vector3| -> f64 {
-            let dx = from.x - to.x;
-            let dy = from.y - to.y;
-            let dz = from.z - to.z;
-            (dx * dx + dy * dy + dz * dz).sqrt()
-        };
-
-        let mut sound_paths = Vec::with_capacity(7);
-
-        let direct_distance = distance_between(soundboard_position, listener_position);
-
-        sound_paths.push(SoundPath {
-            delay_seconds: direct_distance / speed_of_sound,
-            gain: air_density / (4.0 * PI * direct_distance),
-        });
-
-        for axis in 0..3 {
-            for wall_side in 0..2 {
-                let mirrored_source = if wall_side == 0 {
-                    soundboard_position.with_component(axis, -soundboard_position.component(axis))
-                } else {
-                    soundboard_position.with_component(
-                        axis,
-                        2.0 * room_dimensions.component(axis) - soundboard_position.component(axis),
-                    )
-                };
-
-                let image_distance = distance_between(mirrored_source, listener_position);
-
-                sound_paths.push(SoundPath {
-                    delay_seconds: image_distance / speed_of_sound,
-                    gain: wall_reflection_factor * air_density / (4.0 * PI * image_distance),
-                });
-            }
-        }
-
-        DirectAndEarlyField { sound_paths }
-    }
-
-    fn pressure(&self, volume_acceleration_history: &SampleHistory) -> f64 {
-        self.sound_paths
-            .iter()
-            .map(|path| path.gain * volume_acceleration_history.value_at_age(path.delay_seconds))
-            .sum()
-    }
-}
-
-struct SampleHistory {
-    samples: Vec<f64>,
-    write_index: usize,
-    total_samples_pushed: usize,
-    sample_rate: f64,
-}
-
-impl SampleHistory {
-    fn new(capacity: usize, sample_rate: f64) -> Self {
-        SampleHistory {
-            samples: vec![0.0; capacity.max(4)],
-            write_index: 0,
-            total_samples_pushed: 0,
-            sample_rate,
-        }
-    }
-
-    fn clear(&mut self) {
-        self.samples.fill(0.0);
-        self.write_index = 0;
-        self.total_samples_pushed = 0;
-    }
-
-    fn push(&mut self, value: f64) {
-        self.samples[self.write_index] = value;
-        self.write_index = (self.write_index + 1) % self.samples.len();
-        self.total_samples_pushed += 1;
-    }
-
-    fn value_at_age(&self, age_seconds: f64) -> f64 {
-        if age_seconds < 0.0 || self.total_samples_pushed == 0 {
-            return 0.0;
-        }
-
-        let fractional_position = age_seconds * self.sample_rate;
-        let whole_steps_back = fractional_position.floor() as usize;
-        let fraction = fractional_position - whole_steps_back as f64;
-
-        let capacity = self.samples.len();
-        let available_history = self.total_samples_pushed.min(capacity);
-
-        if whole_steps_back + 1 >= available_history {
-            return 0.0;
-        }
-
-        let newest_index = (self.write_index + capacity - 1) % capacity;
-        let index_newer = (newest_index + capacity - whole_steps_back) % capacity;
-        let index_older = (newest_index + capacity - whole_steps_back - 1) % capacity;
-
-        self.samples[index_newer] * (1.0 - fraction) + self.samples[index_older] * fraction
-    }
-}
-
 pub struct Instrument {
     pub soundboard: Soundboard,
     pub air: AirRoom,
     pub live_voicing: LiveVoicingControls,
-    volume_acceleration_history: SampleHistory,
-    direct_and_early_field: DirectAndEarlyField,
     ringout_steps_remaining: u64,
     pub simulated_time: f64,
 }
@@ -368,7 +238,11 @@ impl Instrument {
     pub fn new(random_seed: u64) -> Self {
         let room_dimensions = Vector3::new(4.7, 3.6, 2.8);
         let soundboard_center_position = Vector3::new(1.9, 1.35, 1.05);
-        let listener_position = Vector3::new(3.3, 2.4, 1.2);
+
+        // Stereo listener positions (approx 15cm apart for human head width)
+        let listener_left_position = Vector3::new(3.3, 2.4, 1.125);
+        let listener_right_position = Vector3::new(3.3, 2.4, 1.275);
+
         let speed_of_sound = 343.0;
         let air_density = 1.2;
 
@@ -385,36 +259,24 @@ impl Instrument {
             air_density,
             highest_modeled_frequency: 300.0,
             soundboard_position: soundboard_center_position,
-            listener_position,
+            listener_left_position,
+            listener_right_position,
         });
-
-        let history_capacity = (12.0 / speed_of_sound * SIMULATION_RATE_HZ).ceil() as usize + 8;
 
         Instrument {
             soundboard,
             air,
             live_voicing: LiveVoicingControls::default(),
-            volume_acceleration_history: SampleHistory::new(history_capacity, SIMULATION_RATE_HZ),
-            direct_and_early_field: DirectAndEarlyField::new(
-                room_dimensions,
-                soundboard_center_position,
-                listener_position,
-                air_density,
-                speed_of_sound,
-                0.7,
-            ),
             ringout_steps_remaining: 0,
             simulated_time: 0.0,
         }
     }
 
-    pub fn step(&mut self, voices: &mut [Option<SynthVoice>]) -> f64 {
+    pub fn step(&mut self, voices: &mut [Option<SynthVoice>]) -> (f64, f64) {
         let any_voice_active = voices.iter().any(|voice| voice.is_some());
-
         if !any_voice_active && self.ringout_steps_remaining == 0 {
-            self.volume_acceleration_history.push(0.0);
             self.simulated_time += SIMULATION_STEP_SIZE;
-            return 0.0;
+            return (0.0, 0.0);
         }
 
         self.ringout_steps_remaining = if any_voice_active {
@@ -423,13 +285,8 @@ impl Instrument {
             self.ringout_steps_remaining.saturating_sub(1)
         };
 
-        let current_volume_acceleration = self.soundboard.volume_acceleration();
-        self.volume_acceleration_history
-            .push(current_volume_acceleration);
-
         let strike_phase_is_active = if any_voice_active {
             let bridge_state_for_phase_check = self.soundboard.bridge_state();
-
             voices.iter().flatten().any(|voice| {
                 voice
                     .engine
@@ -452,7 +309,6 @@ impl Instrument {
             if voice.releasing {
                 voice.engine.apply_damper_step();
             }
-
             voice.engine.update_slow_modulations(
                 SIMULATION_STEP_SIZE,
                 live_voicing.blooming_energy,
@@ -474,7 +330,6 @@ impl Instrument {
             }
 
             let air_pressure_at_soundboard = self.air.pressure_at_soundboard();
-
             self.soundboard.apply_forces_and_advance(
                 total_bridge_force,
                 air_pressure_at_soundboard,
@@ -486,22 +341,18 @@ impl Instrument {
         }
 
         self.simulated_time += SIMULATION_STEP_SIZE;
-        self.listener_pressure()
+
+        (
+            self.air.pressure_at_listener_left(),
+            self.air.pressure_at_listener_right(),
+        )
     }
 
     pub fn reset(&mut self) {
         self.soundboard.reset();
         self.air.reset();
-        self.volume_acceleration_history.clear();
         self.ringout_steps_remaining = 0;
         self.simulated_time = 0.0;
         self.live_voicing = LiveVoicingControls::default();
-    }
-
-    pub fn listener_pressure(&self) -> f64 {
-        self.air.pressure_at_listener()
-            + self
-                .direct_and_early_field
-                .pressure(&self.volume_acceleration_history)
     }
 }

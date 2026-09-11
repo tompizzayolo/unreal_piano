@@ -2,7 +2,7 @@ use super::modal::ModalOscillator;
 use crate::engine::math::vector::Vector3;
 use std::f64::consts::PI;
 
-const MAX_MODES: usize = 4;
+const MAX_MODES: usize = 32;
 
 #[derive(Clone, Copy)]
 pub struct DampingCoefficients {
