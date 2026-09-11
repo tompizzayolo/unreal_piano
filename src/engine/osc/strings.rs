@@ -140,7 +140,8 @@ impl KeysString {
             end_slope_coefficients.push(wavenumber * alternating_sign);
         }
 
-        let longitudinal_wave_speed = (design.youngs_modulus / design.material_density).sqrt();
+        // Longitudinal wave speed is determined by the steel core, not the effective density of the wound string
+        let longitudinal_wave_speed = (design.youngs_modulus / 7850.0).sqrt();
 
         let mut longitudinal_modes = Vec::with_capacity(number_of_transverse_modes);
 

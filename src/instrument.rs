@@ -83,7 +83,7 @@ fn velocity_hardness_curve(
 
 fn railsback_stretch_cents(note: usize) -> f64 {
     let normalized = ((note as f64 - 60.0) / 48.0).clamp(-1.0, 1.0);
-    30.0 * normalized + 8.0 * normalized * normalized * normalized
+    12.0 * normalized + 4.0 * normalized * normalized * normalized
 }
 
 pub fn note_design(
@@ -102,16 +102,16 @@ pub fn note_design(
     let base_speaking_length = if note >= 60 {
         0.62 * (0.052_f64 / 0.62).powf((note - 60) as f64 / 48.0)
     } else {
-        (0.62 * (261.6256 / nominal_fundamental_frequency).powf(0.90)).min(1.42)
+        (0.62 * (261.6256 / nominal_fundamental_frequency).powf(0.90)).min(2.05)
     };
     let speaking_length = base_speaking_length * length_scale;
 
     let strike_ratio = controls.strike_point_ratio.clamp(1.0 / 64.0, 0.5);
 
     let core_radius = if note <= 45 {
-        linear_interpolation(0.95e-3, 0.72e-3, (note - 21) as f64 / 24.0)
+        linear_interpolation(0.35e-3, 0.60e-3, (note - 21) as f64 / 24.0)
     } else if note <= 60 {
-        linear_interpolation(0.72e-3, 0.475e-3, (note - 45) as f64 / 15.0)
+        linear_interpolation(0.60e-3, 0.475e-3, (note - 45) as f64 / 15.0)
     } else {
         linear_interpolation(0.475e-3, 0.33e-3, (note - 60) as f64 / 48.0)
     };
@@ -238,11 +238,8 @@ impl Instrument {
     pub fn new(random_seed: u64) -> Self {
         let room_dimensions = Vector3::new(4.7, 3.6, 2.8);
         let soundboard_center_position = Vector3::new(1.9, 1.35, 1.05);
-
-        // Stereo listener positions (approx 15cm apart for human head width)
         let listener_left_position = Vector3::new(3.3, 2.4, 1.125);
         let listener_right_position = Vector3::new(3.3, 2.4, 1.275);
-
         let speed_of_sound = 343.0;
         let air_density = 1.2;
 
