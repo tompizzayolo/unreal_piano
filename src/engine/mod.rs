@@ -1,8 +1,8 @@
 pub mod air;
 pub mod complex;
 pub mod hammer;
+pub mod keys;
 pub mod modal;
-pub mod piano;
 pub mod rng;
 pub mod soundboard;
 pub mod strings;

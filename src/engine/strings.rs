@@ -9,7 +9,7 @@ pub struct DampingCoefficients {
 }
 
 #[derive(Clone, Copy)]
-pub struct PianoStringDesign {
+pub struct KeysStringDesign {
     pub speaking_length: f64,
     pub core_radius: f64,
     pub material_density: f64,
@@ -39,8 +39,8 @@ fn transverse_mode_angular_frequency(
     (tension_term + stiffness_term).sqrt()
 }
 
-pub struct PianoString {
-    pub design: PianoStringDesign,
+pub struct KeysString {
+    pub design: KeysStringDesign,
     pub lateral_offset_from_hammer_center: f64,
     pub linear_mass_density: f64,
     pub bending_stiffness: f64,
@@ -57,9 +57,9 @@ pub struct PianoString {
     pub end_slope_coefficients: Vec<f64>,
 }
 
-impl PianoString {
+impl KeysString {
     #[inline]
-    pub fn new(design: PianoStringDesign, lateral_offset: f64, relative_detune: f64) -> Self {
+    pub fn new(design: KeysStringDesign, lateral_offset: f64, relative_detune: f64) -> Self {
         let radius_squared = design.core_radius * design.core_radius;
         let linear_mass_density = design.material_density * PI * radius_squared;
         let bending_stiffness = design.youngs_modulus * PI * radius_squared * radius_squared * 0.25;
@@ -159,7 +159,7 @@ impl PianoString {
             ));
         }
 
-        PianoString {
+        KeysString {
             design,
             lateral_offset_from_hammer_center: lateral_offset,
             linear_mass_density,

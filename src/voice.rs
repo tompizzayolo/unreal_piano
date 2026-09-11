@@ -1,7 +1,7 @@
 use crate::engine::hammer::{Hammer, HammerGeometry};
 use crate::engine::modal::ModalOscillator;
 use crate::engine::soundboard::BridgeState;
-use crate::engine::strings::PianoString;
+use crate::engine::strings::KeysString;
 use crate::engine::vector::Vector3;
 use crate::instrument::NoteDesign;
 use nice_plug::midi::{Channel, Key, VoiceID};
@@ -27,7 +27,7 @@ const DUPLEX_OUTPUT_SCALE: f64 = 0.05;
 const DAMPER_AMPLITUDE_DECAY_LN: f64 = -6.907755278982137;
 
 pub struct PianoVoice {
-    pub strings: Vec<PianoString>,
+    pub strings: Vec<KeysString>,
     pub hammer: Hammer,
     strike_velocity: f64,
     release_noise_seconds_remaining: f64,
@@ -64,7 +64,7 @@ impl PianoVoice {
 
         let mut strings = Vec::with_capacity(string_count);
         for string_index in 0..string_count {
-            strings.push(PianoString::new(
+            strings.push(KeysString::new(
                 design.string,
                 design.unison_lateral_offsets[string_index],
                 design.unison_relative_detunes[string_index],

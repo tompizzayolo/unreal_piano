@@ -1,7 +1,7 @@
 use crate::engine::air::{AirRoom, AirRoomDesign};
 use crate::engine::hammer::{FeltProperties, HammerGeometry};
 use crate::engine::soundboard::{Soundboard, SoundboardDesign};
-use crate::engine::strings::{DampingCoefficients, PianoStringDesign};
+use crate::engine::strings::{DampingCoefficients, KeysStringDesign};
 use crate::engine::vector::Vector3;
 use crate::voice::{SUB_STEPS_DURING_STRIKE, SynthVoice};
 use std::f64::consts::PI;
@@ -60,7 +60,7 @@ pub struct VoicingBaked {
 
 #[derive(Clone, Copy)]
 pub struct NoteDesign {
-    pub string: PianoStringDesign,
+    pub string: KeysStringDesign,
     pub felt: FeltProperties,
     pub number_of_unison_strings: usize,
     pub unison_relative_detunes: [f64; 3],
@@ -130,7 +130,7 @@ pub fn note_design(
         .min(8000.0)
         .max(4.5 * fundamental_frequency);
 
-    let string = PianoStringDesign {
+    let string = KeysStringDesign {
         speaking_length,
         core_radius,
         material_density: effective_density,
