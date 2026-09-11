@@ -50,11 +50,6 @@ impl DirectAndEarlyField {
             direct_gain: air_density / (4.0 * PI * direct_distance),
         }
     }
-
-    #[inline]
-    fn pressure(&self, volume_acceleration_history: &SampleHistory) -> f64 {
-        self.direct_gain * volume_acceleration_history.value_at_age(self.direct_delay)
-    }
 }
 
 struct SampleHistory {
@@ -72,13 +67,6 @@ impl SampleHistory {
             total_samples_pushed: 0,
             sample_rate,
         }
-    }
-
-    #[inline]
-    fn push(&mut self, value: f64) {
-        self.samples[self.write_index] = value;
-        self.write_index = (self.write_index + 1) % self.samples.len();
-        self.total_samples_pushed += 1;
     }
 
     fn value_at_age(&self, age_seconds: f64) -> f64 {
@@ -224,157 +212,5 @@ impl Piano {
             volume_acceleration_history,
             direct_and_early_field,
         }
-    }
-
-    #[inline]
-    pub fn current_time(&self) -> f64 {
-        self.simulated_time
-    }
-
-    #[inline]
-    pub fn listener_pressure(&self) -> f64 {
-        self.air.pressure_at_listener()
-            + self
-                .direct_and_early_field
-                .pressure(&self.volume_acceleration_history)
-    }
-
-    pub fn state_is_finite(&self) -> bool {
-        self.hammer.rotation_angle.is_finite()
-            && self.hammer.angular_velocity.is_finite()
-            && self
-                .soundboard
-                .modes
-                .iter()
-                .all(|mode| mode.displacement.is_finite() && mode.velocity.is_finite())
-            && self.air.modal_states.iter().all(|mode| {
-                mode.state.real_part.is_finite() && mode.state.imaginary_part.is_finite()
-            })
-            && self.strings.iter().all(|piano_string| {
-                piano_string
-                    .vertical_modes
-                    .iter()
-                    .all(|mode| mode.displacement.is_finite() && mode.velocity.is_finite())
-                    && piano_string
-                        .horizontal_modes
-                        .iter()
-                        .all(|mode| mode.displacement.is_finite() && mode.velocity.is_finite())
-                    && piano_string
-                        .longitudinal_modes
-                        .iter()
-                        .all(|mode| mode.displacement.is_finite() && mode.velocity.is_finite())
-            })
-    }
-
-    pub fn step(&mut self) {
-        let outer_step_size = self.time_step;
-
-        let current_volume_acceleration = self.soundboard.volume_acceleration();
-        self.volume_acceleration_history
-            .push(current_volume_acceleration);
-
-        let hammer_is_rising_toward_the_strings = self.hammer.angular_velocity > 0.0
-            && self.hammer.rotation_angle >= self.strike_activation_angle;
-
-        let strike_phase_is_active =
-            hammer_is_rising_toward_the_strings || self.any_string_in_contact();
-
-        let sub_step_count = if strike_phase_is_active {
-            SUB_STEPS_DURING_STRIKE
-        } else {
-            1
-        };
-
-        let sub_step_size = outer_step_size / sub_step_count as f64;
-
-        for _ in 0..sub_step_count {
-            self.advance_coupled_sub_step(sub_step_size);
-        }
-
-        self.simulated_time += outer_step_size;
-    }
-
-    fn any_string_in_contact(&self) -> bool {
-        if self.hammer.rotation_angle < self.strike_activation_angle - STRIKE_PHASE_ANGLE_MARGIN {
-            return false;
-        }
-
-        let bridge_displacement = self.soundboard.bridge_displacement();
-        let hammer_angle = self.hammer.rotation_angle;
-
-        for string_index in 0..self.strings.len() {
-            let string_displacement =
-                self.strings[string_index].displacement_at_strike_point(bridge_displacement);
-
-            let (_, contact_detected) = self.hammer.felt_compression(
-                hammer_angle,
-                string_displacement,
-                self.strings[string_index].lateral_offset_from_hammer_center,
-                self.felt_contact_references[string_index],
-            );
-
-            if contact_detected {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn advance_coupled_sub_step(&mut self, step_size: f64) {
-        let string_count = self.strings.len();
-        let bridge_state = self.soundboard.bridge_state();
-        let hammer_angle = self.hammer.rotation_angle;
-
-        let mut total_felt_force_on_strings = Vector3::ZERO;
-
-        for string_index in 0..string_count {
-            let string_displacement =
-                self.strings[string_index].displacement_at_strike_point(bridge_state.displacement);
-
-            let (compression, _) = self.hammer.felt_compression(
-                hammer_angle,
-                string_displacement,
-                self.strings[string_index].lateral_offset_from_hammer_center,
-                self.felt_contact_references[string_index],
-            );
-
-            let felt_frame_force = self.hammer.felt_contact_force(
-                compression,
-                self.previous_felt_compressions[string_index],
-                step_size,
-            );
-
-            total_felt_force_on_strings = total_felt_force_on_strings + felt_frame_force;
-
-            let force_in_string_frame = self
-                .hammer
-                .force_on_string_in_string_frame(felt_frame_force, hammer_angle);
-
-            self.strings[string_index].apply_forces_and_advance(
-                force_in_string_frame,
-                bridge_state.acceleration,
-                step_size,
-            );
-
-            self.previous_felt_compressions[string_index] = compression;
-        }
-
-        let total_shank_torque = self.hammer.total_torque(total_felt_force_on_strings);
-        self.hammer
-            .advance_shank_rotation(total_shank_torque, step_size);
-
-        let mut total_bridge_force = Vector3::ZERO;
-        for piano_string in &self.strings {
-            total_bridge_force = total_bridge_force
-                + piano_string.force_exerted_on_bridge(bridge_state.displacement);
-        }
-
-        let air_pressure = self.air.pressure_at_soundboard();
-        self.soundboard
-            .apply_forces_and_advance(total_bridge_force, air_pressure, step_size);
-
-        let volume_velocity = self.soundboard.volume_velocity();
-        self.air.advance(volume_velocity, step_size);
     }
 }

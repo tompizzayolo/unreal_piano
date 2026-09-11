@@ -2,6 +2,8 @@ use super::modal::ModalOscillator;
 use super::vector::Vector3;
 use std::f64::consts::PI;
 
+const MAX_MODES: usize = 4;
+
 #[derive(Clone, Copy)]
 pub struct DampingCoefficients {
     pub constant_part: f64,
@@ -70,8 +72,10 @@ impl KeysString {
         let modal_mass = linear_mass_density * design.speaking_length * 0.5;
         let cutoff_angular_frequency = 2.0 * PI * design.highest_modeled_frequency;
 
+        let max_modes = design.maximum_transverse_mode_count.min(MAX_MODES);
+
         let mut number_of_transverse_modes = 0usize;
-        for mode_index in 1..=design.maximum_transverse_mode_count {
+        for mode_index in 1..=max_modes {
             let wavenumber = mode_index as f64 * PI / design.speaking_length;
             let angular_frequency = transverse_mode_angular_frequency(
                 wavenumber,
