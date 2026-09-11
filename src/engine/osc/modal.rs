@@ -1,4 +1,4 @@
-use super::complex::Complex64;
+use crate::engine::math::complex::Complex64;
 
 pub struct ModalOscillator {
     pub angular_frequency: f64,

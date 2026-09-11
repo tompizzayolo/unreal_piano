@@ -1,4 +1,4 @@
-use super::vector::Vector3;
+use crate::engine::math::vector::Vector3;
 
 pub const GRAVITATIONAL_ACCELERATION: f64 = 9.81;
 const REST_RAIL_STIFFNESS: f64 = 2.0e3;

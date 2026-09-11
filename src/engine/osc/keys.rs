@@ -1,9 +1,14 @@
-use super::air::{AirRoom, AirRoomDesign};
-use super::hammer::{FeltProperties, Hammer, HammerGeometry};
-use super::soundboard::{Soundboard, SoundboardDesign};
-use super::strings::{KeysString, KeysStringDesign};
-use super::vector::Vector3;
 use std::f64::consts::PI;
+
+use crate::engine::{
+    math::vector::Vector3,
+    osc::{
+        air::{AirRoom, AirRoomDesign},
+        hammer::{FeltProperties, Hammer, HammerGeometry},
+        soundboard::{Soundboard, SoundboardDesign},
+        strings::{KeysString, KeysStringDesign},
+    },
+};
 
 const UNISON_RELATIVE_DETUNES: [f64; 3] = [-0.0012, 0.0004, 0.0010];
 const UNISON_LATERAL_OFFSETS: [f64; 3] = [-0.002, 0.0, 0.002];

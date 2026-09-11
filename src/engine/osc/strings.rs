@@ -1,5 +1,5 @@
 use super::modal::ModalOscillator;
-use super::vector::Vector3;
+use crate::engine::math::vector::Vector3;
 use std::f64::consts::PI;
 
 const MAX_MODES: usize = 4;

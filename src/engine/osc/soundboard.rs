@@ -1,6 +1,5 @@
 use super::modal::ModalOscillator;
-use super::rng::DeterministicRandom;
-use super::vector::Vector3;
+use crate::engine::math::{rng::DeterministicRandom, vector::Vector3};
 use std::f64::consts::PI;
 
 pub struct SoundboardDesign {

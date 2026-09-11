@@ -1,8 +1,8 @@
-use crate::engine::hammer::{Hammer, HammerGeometry};
-use crate::engine::modal::ModalOscillator;
-use crate::engine::soundboard::BridgeState;
-use crate::engine::strings::KeysString;
-use crate::engine::vector::Vector3;
+use crate::engine::math::vector::Vector3;
+use crate::engine::osc::hammer::{Hammer, HammerGeometry};
+use crate::engine::osc::modal::ModalOscillator;
+use crate::engine::osc::soundboard::BridgeState;
+use crate::engine::osc::strings::KeysString;
 use crate::instrument::NoteDesign;
 use nice_plug::midi::{Channel, Key, VoiceID};
 use std::f64::consts::PI;

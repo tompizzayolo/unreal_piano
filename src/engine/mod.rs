@@ -1,9 +1,3 @@
-pub mod air;
-pub mod complex;
-pub mod hammer;
-pub mod keys;
-pub mod modal;
-pub mod rng;
-pub mod soundboard;
-pub mod strings;
-pub mod vector;
+pub mod math;
+pub mod noise;
+pub mod osc;

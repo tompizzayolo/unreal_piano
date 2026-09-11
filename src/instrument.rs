@@ -1,8 +1,8 @@
-use crate::engine::air::{AirRoom, AirRoomDesign};
-use crate::engine::hammer::{FeltProperties, HammerGeometry};
-use crate::engine::soundboard::{Soundboard, SoundboardDesign};
-use crate::engine::strings::{DampingCoefficients, KeysStringDesign};
-use crate::engine::vector::Vector3;
+use crate::engine::math::vector::Vector3;
+use crate::engine::osc::air::{AirRoom, AirRoomDesign};
+use crate::engine::osc::hammer::{FeltProperties, HammerGeometry};
+use crate::engine::osc::soundboard::{Soundboard, SoundboardDesign};
+use crate::engine::osc::strings::{DampingCoefficients, KeysStringDesign};
 use crate::voice::{SUB_STEPS_DURING_STRIKE, SynthVoice};
 use std::f64::consts::PI;
 

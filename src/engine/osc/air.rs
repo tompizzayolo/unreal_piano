@@ -1,7 +1,12 @@
-use super::complex::Complex64;
-use super::modal::ComplexModalMode;
-use super::vector::Vector3;
+// use super::complex::Complex64;
+// use super::modal::ComplexModalMode;
+// use super::vector::Vector3;
 use std::f64::consts::PI;
+
+use crate::engine::{
+    math::{complex::Complex64, vector::Vector3},
+    osc::modal::ComplexModalMode,
+};
 
 pub struct AirRoomDesign {
     pub room_dimensions: Vector3,

@@ -14,8 +14,8 @@ use nice_plug::midi::{Channel, Key, VoiceID};
 use nice_plug::prelude::*;
 use nice_plug_egui::{EguiEditor, EguiEditorState, RepaintNotifier};
 
-use crate::engine::hammer::HammerGeometry;
-use crate::engine::rng::DeterministicRandom;
+use crate::engine::math::rng::DeterministicRandom;
+use crate::engine::osc::hammer::HammerGeometry;
 use crate::instrument::{
     Instrument, LiveVoicingControls, SIMULATION_RATE_HZ, SIMULATION_STEP_SIZE,
     StrikeVoicingControls, note_design, shared_hammer_geometry,
