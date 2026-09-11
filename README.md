@@ -1,4 +1,4 @@
-# Unreal Piano
+# Shade
 
 **WIP physical-modeling-based piano synthesizer**
 Right now it's a total crap. It sounds like a stupid Ukulele or some sort of Koto
